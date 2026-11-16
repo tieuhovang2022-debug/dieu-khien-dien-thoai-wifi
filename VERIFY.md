@@ -904,3 +904,61 @@ app Farm Agent) thì màn hình của nó mới hiện trên trang
 /mirror; máy chưa cấp quyền sẽ hiện ô hướng dẫn thay vì ảnh.
 Cần người dùng cập nhật server lên 3.4 và thử trang phản
 chiếu trên dàn máy thật để xác nhận dứt điểm.
+
+---
+
+## Bản vá agent v3.2 (Giai đoạn 3.5, 2026-11-17) — sửa lỗi chụp màn hình trên Android mới
+
+**Lỗi thật trên máy thật (ảnh chụp 2026-11-17 ~00:32):** máy '02'
+(Android đời mới) kết nối bình thường nhưng khung điều khiển /mirror
+báo: "Không chụp được màn hình: agent_error: Media projections
+require a foreground service of type Servi…" — SecurityException từ
+Android 14: app tạo MediaProjection khi chưa có foreground service
+loại mediaProjection nào đang chạy. Agent v3.1 không khai báo
+foregroundServiceType và không startForeground với type đó. Consent
+vẫn tới được (không phải lỗi no_permission) — lỗi nổ đúng lúc tạo
+projection/VirtualDisplay.
+
+**Cách sửa (chỉ phía agent — server giữ nguyên bản 3.4):**
+
+- AndroidManifest: `.AgentService` thêm
+  `android:foregroundServiceType="mediaProjection"`; thêm quyền
+  `android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION`;
+  versionCode 5 / versionName "3.2" (minSdk 28 / targetSdk 29 giữ nguyên).
+- `AgentService.onCreate` gọi bản 3 tham số
+  `startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)`
+  từ API 29+ (dưới 29 dùng bản 2 tham số; nếu bản có type ném lỗi thì
+  lui về bản 2 tham số và `ensureCaptureLocked()` gọi lại bản có type
+  ngay trước `getMediaProjection`).
+- Đăng ký `MediaProjection.Callback` TRƯỚC `createVirtualDisplay`
+  (Android 14 bắt buộc); `onStop` dọn state + xoá consent đã lưu trong
+  MediaPerm → lần chụp sau trả `no_permission` để người dùng cấp lại,
+  thay vì crash.
+- Đổi sang thiết kế 1 projection dùng chung: VirtualDisplay +
+  ImageReader tạo 1 lần rồi dùng lại cho mọi lần chụp (consent
+  Android 14 chỉ dùng được 1 lần — cách cũ tạo projection mới cho
+  từng ảnh sẽ gãy ngay sau ảnh đầu tiên trên Android 14). Xoay màn
+  hình → `VirtualDisplay.resize`, giữ nguyên projection. hello báo
+  `agentVersion "3.2"`.
+
+**Kiểm chứng:**
+
+- aapt2 dump trên APK đã build: service `.AgentService` có
+  `foregroundServiceType=0x00000020` (= mediaProjection); danh sách
+  quyền có `FOREGROUND_SERVICE_MEDIA_PROJECTION`.
+- apksigner: cert SHA-256
+  `0c153ff07f181ca786a379ad4893adbb76066416b71533db452da0cb058b9a29`
+  — KHÔNG ĐỔI → checksum QR ghi danh vẫn khớp (verify-stage2 tự tính
+  lại từ APK mới): **verify-stage2.js 38 PASS, 0 FAIL**.
+- **verify-stage34.js 34 PASS, 0 FAIL.** Hồi quy đủ bộ:
+  verify-stage3.js 41, verify-stage31.js 29, verify-stage32.js 54,
+  verify-stage321.js 18, verify-stage322.js 16, verify-stage323.js 25,
+  verify-stage324.js 18, verify-stage33.js 37 — tất cả PASS, 0 FAIL,
+  đúng nguyên số đếm trước.
+
+**Giới hạn thành thật:** môi trường build không có máy Android 14
+thật và không có emulator — bản vá làm đúng chuẩn Android 14 (FGS
+type mediaProjection + callback trước createVirtualDisplay +
+consent dùng 1 lần) và đã kiểm chứng tĩnh (manifest/cert) + vòng
+kín bằng fake agent, nhưng xác nhận dứt điểm phải chờ người dùng
+cài agent v3.2 đè lên máy '02' rồi mở lại trang /mirror.

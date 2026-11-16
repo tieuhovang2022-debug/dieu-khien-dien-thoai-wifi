@@ -9,6 +9,7 @@ import android.app.admin.DevicePolicyManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
@@ -71,7 +72,25 @@ public class AgentService extends Service {
     public void onCreate() {
         super.onCreate();
         createChannel();
-        startForeground(NOTIF_ID, buildNotification("Đang khởi động..."));
+        startForegroundTyped("Đang khởi động...");
+    }
+
+    // Android 14 bat buoc: MediaProjection chi tao duoc khi dang co mot
+    // foreground service loai mediaProjection dang chay (ban va agent v3.2 —
+    // truoc day thieu type nay nen may Android moi bao loi
+    // "Media projections require a foreground service of type ServiceInfo...").
+    // Goi ban 3 tham so tu API 29+; loi thi lui ve ban 2 tham so —
+    // ensureCaptureLocked() se goi lai ban co type ngay truoc khi tao projection.
+    private void startForegroundTyped(String text) {
+        Notification n = buildNotification(text);
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+        startForeground(NOTIF_ID, n);
     }
 
     @Override
@@ -88,6 +107,9 @@ public class AgentService extends Service {
     public void onDestroy() {
         running = false;
         closeSocket();
+        synchronized (captureLock) {
+            releaseCaptureLocked(true);
+        }
         cmdExecutor.shutdownNow();
         setStatus("Đã dừng");
         super.onDestroy();
@@ -262,7 +284,7 @@ public class AgentService extends Service {
         o.put("sdk", Build.VERSION.SDK_INT);
         o.put("androidId", androidId());
         o.put("battery", batteryLevel());
-        o.put("agentVersion", "3.1");
+        o.put("agentVersion", "3.2");
         o.put("deviceOwner", isDeviceOwner(this));
         o.put("accessibility", FarmAccessibilityService.isRunning());
         return o;
@@ -596,14 +618,76 @@ public class AgentService extends Service {
     }
 
     // ---------------- Chup man hinh ----------------
+    // Thiet ke dung chung 1 MediaProjection cho moi lan chup (ban va v3.2):
+    // consent Android 14 chi dung duoc 1 lan nen khong the tao projection moi
+    // cho tung anh nhu ban cu. VirtualDisplay + ImageReader tao 1 lan roi
+    // dung lai; xoay man hinh thi resize VirtualDisplay, khong tao lai projection.
 
-    private String takeScreenshot() throws Exception {
-        MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        if (mpm == null) throw new Exception("no_projection_service");
-        Intent dataCopy = new Intent(MediaPerm.data);
-        MediaProjection mp = mpm.getMediaProjection(MediaPerm.resultCode, dataCopy);
-        if (mp == null) throw new Exception("projection_failed");
+    private final Object captureLock = new Object();
+    private MediaProjection projection;
+    private VirtualDisplay virtualDisplay;
+    private ImageReader imageReader;
+    private HandlerThread captureThread;
+    private int capW = 0;
+    private int capH = 0;
 
+    private final MediaProjection.Callback projectionCallback = new MediaProjection.Callback() {
+        @Override
+        public void onStop() {
+            // He thong / nguoi dung dung buoi chieu (hoac projection bi thu hoi):
+            // don state + xoa consent da luu -> lan chup sau tra no_permission
+            // de nguoi dung cap lai trong app, thay vi crash.
+            synchronized (captureLock) {
+                releaseCaptureLocked(false);
+                MediaPerm.granted = false;
+                MediaPerm.resultCode = 0;
+                MediaPerm.data = null;
+            }
+        }
+    };
+
+    /** Chi goi khi dang giu captureLock. stopProjection=false khi he thong da dung san. */
+    private void releaseCaptureLocked(boolean stopProjection) {
+        if (virtualDisplay != null) {
+            try {
+                virtualDisplay.release();
+            } catch (Exception ignored) {
+            }
+            virtualDisplay = null;
+        }
+        if (imageReader != null) {
+            try {
+                imageReader.close();
+            } catch (Exception ignored) {
+            }
+            imageReader = null;
+        }
+        if (projection != null) {
+            try {
+                projection.unregisterCallback(projectionCallback);
+            } catch (Exception ignored) {
+            }
+            if (stopProjection) {
+                try {
+                    projection.stop();
+                } catch (Exception ignored) {
+                }
+            }
+            projection = null;
+        }
+        if (captureThread != null) {
+            try {
+                captureThread.quitSafely();
+            } catch (Exception ignored) {
+            }
+            captureThread = null;
+        }
+        capW = 0;
+        capH = 0;
+    }
+
+    /** Chi goi khi dang giu captureLock. Tao moi projection neu chua co; resize neu doi kich thuoc. */
+    private void ensureCaptureLocked() throws Exception {
         WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         Display display = wm.getDefaultDisplay();
         android.graphics.Point size = new android.graphics.Point();
@@ -617,21 +701,73 @@ public class AgentService extends Service {
         if ((h % 2) == 1) h -= 1;
         DisplayMetrics metrics = new DisplayMetrics();
         display.getMetrics(metrics);
+        int dpi = metrics.densityDpi;
+
+        if (projection != null) {
+            if (w != capW || h != capH) {
+                // Doi kich thuoc (xoay man hinh...): resize VirtualDisplay va
+                // thay ImageReader — giu nguyen projection dang chay.
+                ImageReader old = imageReader;
+                ImageReader nr = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
+                virtualDisplay.resize(w, h, dpi);
+                virtualDisplay.setSurface(nr.getSurface());
+                imageReader = nr;
+                if (old != null) old.close();
+                capW = w;
+                capH = h;
+            }
+            return;
+        }
+
+        // FGS loai mediaProjection phai dang chay TRUOC getMediaProjection
+        // (Android 14) — goi lai startForeground co type ngay tai day cho chac.
+        startForegroundTyped(statusText);
+        MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (mpm == null) throw new Exception("no_projection_service");
+        Intent dataCopy = new Intent(MediaPerm.data);
+        MediaProjection mp = mpm.getMediaProjection(MediaPerm.resultCode, dataCopy);
+        if (mp == null) throw new Exception("projection_failed");
 
         HandlerThread ht = new HandlerThread("farm-shot");
         ht.start();
         Handler handler = new Handler(ht.getLooper());
+        // Android 14 bat buoc: dang ky MediaProjection.Callback TRUOC createVirtualDisplay.
+        mp.registerCallback(projectionCallback, handler);
         ImageReader reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
-        VirtualDisplay vd = null;
+        VirtualDisplay vd;
         try {
-            vd = mp.createVirtualDisplay("farmagent-shot", w, h, metrics.densityDpi,
+            vd = mp.createVirtualDisplay("farmagent-shot", w, h, dpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, handler);
+        } catch (Exception e) {
+            try {
+                mp.unregisterCallback(projectionCallback);
+            } catch (Exception ignored) {
+            }
+            try {
+                mp.stop();
+            } catch (Exception ignored) {
+            }
+            reader.close();
+            ht.quitSafely();
+            throw e;
+        }
+        projection = mp;
+        imageReader = reader;
+        virtualDisplay = vd;
+        captureThread = ht;
+        capW = w;
+        capH = h;
+    }
+
+    private String takeScreenshot() throws Exception {
+        synchronized (captureLock) {
+            ensureCaptureLocked();
             Bitmap bmp = null;
             long deadline = System.currentTimeMillis() + 4000;
             while (System.currentTimeMillis() < deadline && bmp == null) {
                 Image img = null;
                 try {
-                    img = reader.acquireLatestImage();
+                    img = imageReader.acquireLatestImage();
                 } catch (Exception ignored) {
                 }
                 if (img == null) {
@@ -639,7 +775,7 @@ public class AgentService extends Service {
                     continue;
                 }
                 try {
-                    bmp = imageToBitmap(img, w, h);
+                    bmp = imageToBitmap(img, capW, capH);
                 } finally {
                     img.close();
                 }
@@ -649,14 +785,6 @@ public class AgentService extends Service {
             bmp.compress(Bitmap.CompressFormat.JPEG, 70, baos);
             bmp.recycle();
             return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-        } finally {
-            if (vd != null) vd.release();
-            reader.close();
-            try {
-                mp.stop();
-            } catch (Exception ignored) {
-            }
-            ht.quitSafely();
         }
     }
 

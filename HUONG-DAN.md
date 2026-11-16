@@ -1,3 +1,40 @@
+# Farm Control — Giai đoạn 3.5: Hướng dẫn
+
+> **BẢN 3.5 (2026-11-17) — BẢN VÁ AGENT v3.2: sửa lỗi KHÔNG
+> PHẢN CHIẾU ĐƯỢC MÀN HÌNH trên điện thoại Android đời mới.**
+> Trên máy Android mới (như máy 02), trang /mirror báo lỗi
+> "Media projections require a foreground service of
+> type…" — Android mới bắt buộc app phải chạy foreground
+> service loại mediaProjection trước khi chụp màn hình;
+> agent v3.1 chưa có nên bị chặn ngay lúc chụp. Bản 3.5 sửa
+> đúng chỗ đó: khai báo loại service mediaProjection +
+> đăng ký callback theo chuẩn Android 14 + dùng chung 1 lần
+> cấp quyền cho mọi ảnh chụp. **Server KHÔNG đổi (vẫn là
+> server của bản 3.4).**
+>
+> **Việc huynh cần làm trên MỖI điện thoại:**
+> 1. Cài file **agent.apk** mới (trong gói này) **ĐÈ LÊN**
+> bản cũ — cùng chữ ký nên cài đè bình thường, **IP / cổng
+> / nhãn máy đã lưu được giữ nguyên**, không phải nhập lại.
+> 2. Mở app Farm Agent → bấm **CHO PHÉP CHỤP MÀN HÌNH** →
+> chọn **"Bắt đầu ngay"** một lần nữa (bản vá cần cấp lại
+> quyền 1 lần).
+> 3. Mở lại trang **http://localhost:8080/mirror** — màn
+> hình máy sẽ hiện.
+>
+> **Cách cập nhật server (như mọi lần):** (1) Dừng server
+> cũ (Ctrl+C trong cửa sổ Terminal đang chạy server). (2)
+> Giải nén gói 3.5. (3) Chép **toàn bộ file trong thư mục
+> `data/` của server cũ** (bản đang dùng) đè sang thư mục
+> `data/` của server 3.5 — để giữ kho Gmail, kho heo, link
+> game và tiến độ điểm danh. (4) Vào thư mục `server` của
+> bản 3.5 và chạy `node server.js`.
+>
+> **⚠️ QUAN TRỌNG: sau khi chép file `data/` xong và chạy
+> server mới, hãy mở tab "Kho dữ liệu" trên trang điều
+> khiển và KIỂM TRA kho Gmail / kho heo đã hiện đúng tài
+> khoản của huynh CHƯA, rồi mới chạy bất cứ tác vụ nào.**
+
 # Farm Control — Giai đoạn 3.4: Hướng dẫn
 
 > **BẢN 3.4 (2026-11-16)** — Thêm TOOL MỚI theo yêu cầu của
