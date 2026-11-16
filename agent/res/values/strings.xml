@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_description">Farm Agent dùng quyền Trợ năng để chạm, vuốt và nhập chữ trên màn hình theo lệnh từ máy chủ điều khiển của chính bạn (MacBook trên cùng WiFi). Agent chỉ thao tác khi nhận lệnh từ máy chủ bạn đã cấu hình trong app, và không gửi nội dung màn hình đi bất cứ đâu khác.</string>
+</resources>

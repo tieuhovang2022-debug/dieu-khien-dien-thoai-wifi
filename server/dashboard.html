@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm Control — Điều khiển dàn máy (Giai đoạn 3)</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #0f766e; color: #123; }
+  header { background: #115e59; color: #fff; padding: 14px 18px; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; font-size: 14px; opacity: .92; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #4ade80; margin-right: 6px; }
+  main { padding: 14px; max-width: 1180px; margin: 0 auto; }
+  .counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .counter { background: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+  .counter .num { font-size: 28px; font-weight: 800; }
+  .counter .lbl { font-size: 13.5px; color: #456; }
+  .panel { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+  .panel h2 { margin: 0 0 10px; font-size: 18px; }
+  #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+  .card.off { opacity: .65; }
+  .card h2 { margin: 0 0 6px; font-size: 19px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: #fff; margin-right: 4px; }
+  .on { background: #16a34a; } .offb { background: #9ca3af; }
+  .b-do { background: #2563eb; } .b-a11y { background: #7c3aed; } .b-no { background: #d1d5db; color: #374151; }
+  .meta { font-size: 14.5px; line-height: 1.55; color: #234; }
+  .btns { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  button { font-size: 14px; padding: 8px 11px; border: 0; border-radius: 8px; background: #0d9488; color: #fff; cursor: pointer; }
+  button:hover { background: #0f766e; }
+  button:disabled { background: #cbd5e1; cursor: not-allowed; }
+  button.warn { background: #d97706; } button.warn:hover { background: #b45309; }
+  button.danger { background: #dc2626; } button.danger:hover { background: #b91c1c; }
+  button.ghost { background: #e5e7eb; color: #123; } button.ghost:hover { background: #d1d5db; }
+  .shot { margin-top: 10px; }
+  .shot img { max-width: 100%; border-radius: 8px; border: 1px solid #ddd; }
+  #log { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.6; max-height: 320px; overflow: auto; white-space: pre-wrap; }
+  .ok-t { color: #15803d; } .err-t { color: #b91c1c; } .wait-t { color: #b45309; font-weight: 700; }
+  .checkin-t { background: #dcfce7; color: #14532d; font-weight: 800; padding: 3px 8px; border-radius: 6px; border: 1px solid #22c55e; }
+  .b-watch { background: #db2777; } .b-checkin { background: #16a34a; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border-bottom: 1px solid #e5e7eb; padding: 7px 8px; text-align: left; vertical-align: top; }
+  th { background: #f0fdfa; }
+  textarea, input[type=text], select { font-size: 14px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 8px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 84px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .devchecks { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; font-size: 14.5px; }
+  .runbox { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+  .runbox h3 { margin: 0 0 6px; font-size: 15.5px; }
+  .devrun { border-top: 1px dashed #e5e7eb; padding: 8px 0; }
+  .devrun .st { font-weight: 700; }
+  .steps { margin: 6px 0 0 18px; padding: 0; font-size: 14px; line-height: 1.65; }
+  .steps li.done { color: #15803d; }
+  .steps li.error { color: #b91c1c; }
+  .steps li.running { color: #0f766e; font-weight: 700; }
+  .steps li.waiting_manual { color: #b45309; font-weight: 800; background: #fffbeb; }
+  .steps li.skipped { color: #6b7280; }
+  .st-running { color: #0f766e; } .st-done { color: #15803d; } .st-error { color: #b91c1c; }
+  .st-waiting_manual { color: #b45309; } .st-stopped { color: #6b7280; }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.72); display: none; z-index: 50; }
+  #modal .box { background: #fff; border-radius: 12px; max-width: 520px; margin: 4vh auto; padding: 16px; max-height: 92vh; overflow: auto; }
+  #modal img { max-width: 100%; border-radius: 8px; border: 1px solid #ddd; }
+  pre.qr { background: #0b1220; color: #d1fae5; padding: 12px; border-radius: 8px; font-size: 12.5px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  #empty { background: #fff; border-radius: 12px; padding: 18px; font-size: 16px; margin-bottom: 14px; }
+  .small { font-size: 13px; color: #456; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌾 Farm Control — Điều khiển dàn máy (Giai đoạn 3)</h1>
+  <p><span class="dot" id="serverDot"></span><span id="serverInfo">Đang nối server...</span></p>
+</header>
+<main>
+  <div class="counters">
+    <div class="counter"><div class="num" id="cTotal">0</div><div class="lbl">Tổng số máy</div></div>
+    <div class="counter"><div class="num" id="cOnline">0</div><div class="lbl">Đang online</div></div>
+    <div class="counter"><div class="num" id="cGmail">0</div><div class="lbl">Gmail sẵn sàng trong kho</div></div>
+    <div class="counter"><div class="num" id="cManual">0</div><div class="lbl">Máy đang chờ chạm tay</div></div>
+    <div class="counter"><div class="num" id="cCheckin">0</div><div class="lbl">🐷 Check-in thành công</div></div>
+  </div>
+
+  <div id="empty" style="display:none">Chưa có máy nào kết nối. Mở app <b>Farm Agent</b> trên điện thoại, nhập IP của MacBook này, cổng 8787, rồi bấm “Lưu &amp; Kết nối”.</div>
+  <div id="devices"></div>
+
+  <div class="panel" id="pipelinePanel">
+    <h2>⚙️ Chạy quy trình (Pipeline)</h2>
+    <div class="row">
+      <label>Quy trình:
+        <select id="pipeSelect"></select>
+      </label>
+      <button id="pipeStop" class="danger" disabled>Dừng quy trình</button>
+    </div>
+    <div class="row">
+      <label>URL APK LINE (tùy chọn): <input type="text" id="lineUrl" size="34" placeholder="http://IP:8080/apks/line.apk"></label>
+      <label>URL APK TikTok Lite (tùy chọn): <input type="text" id="tiktokUrl" size="34" placeholder="http://IP:8080/apks/tiktok-lite.apk"></label>
+    </div>
+    <div class="row">
+      <label>Link game (chỉ cho quy trình Quét game): <input type="text" id="gameUrl" size="40" placeholder="Để trống = mở app TikTok Lite"></label>
+      <label>Thời gian xem: <input type="text" id="watchMinutes" size="4" value="30"> phút</label>
+    </div>
+    <div class="small">Để trống URL APK thì bước cài app tương ứng sẽ được bỏ qua (có ghi chú). Các bước “Chờ chạm tay” (đăng nhập Google / số điện thoại / CAPTCHA) vẫn làm bằng tay, xong bấm “Đã xử lý — chạy tiếp”. Quy trình <b>Quét game &amp; xem video</b> sẽ bật vòng xem chạy nền: máy tự vuốt video và tự báo khi check-in thành công — theo dõi ở thẻ máy và nhật ký sự kiện.</div>
+    <div class="devchecks" id="pipeDevices"></div>
+    <div class="row">
+      <button id="pipeStart">▶ Bắt đầu chạy cho máy đã chọn</button>
+      <span class="small" id="pipeMsg"></span>
+    </div>
+    <div id="runs"></div>
+  </div>
+
+  <div class="panel" id="gmailPanel">
+    <h2>✉️ Kho Gmail</h2>
+    <div class="small">Nhập mỗi dòng một tài khoản, dạng <b>email|mật khẩu</b> hoặc <b>email:mật khẩu</b>. Mật khẩu được lưu ở server và <b>luôn hiển thị dạng che</b> — chỉ được gửi thẳng tới máy khi chạy hỗ trợ đăng nhập.</div>
+    <textarea id="gmailImportText" placeholder="vidu@gmail.com|matkhau123&#10;vidu2@gmail.com:matkhau456"></textarea>
+    <div class="row">
+      <button id="gmailImportBtn">Nhập vào kho</button>
+      <span class="small" id="gmailMsg"></span>
+    </div>
+    <div class="row">
+      <label>Cấp tài khoản tiếp theo cho máy:
+        <select id="assignDevice"></select>
+      </label>
+      <button id="assignBtn">Cấp Gmail</button>
+      <button id="signinBtn" class="warn">Hỗ trợ đăng nhập (gửi email + mật khẩu tới máy)</button>
+    </div>
+    <div style="overflow:auto">
+      <table>
+        <thead><tr><th>Email</th><th>Mật khẩu</th><th>Trạng thái</th><th>Máy được cấp</th><th></th></tr></thead>
+        <tbody id="gmailBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel" id="qrPanel">
+    <h2>📷 Ghi danh Device Owner (QR)</h2>
+    <div class="small">Dùng cho máy vừa factory reset: ở màn hình chào đầu tiên, chạm 6 lần để mở quét QR, kết nối WiFi rồi quét mã chứa nội dung JSON dưới đây (dán JSON vào bất kỳ trang tạo mã QR nào). Sau ghi danh, máy mới reset từ xa được. Chi tiết từng bước xem file HUONG-DAN.md.</div>
+    <div class="row"><button id="qrLoad" class="ghost">Tải nội dung QR</button><button id="qrCopy" class="ghost" disabled>Chép JSON</button></div>
+    <pre class="qr" id="qrPre" style="display:none"></pre>
+  </div>
+
+  <div class="panel">
+    <h2>📜 Nhật ký sự kiện</h2>
+    <div id="log"></div>
+  </div>
+</main>
+
+<div id="modal">
+  <div class="box">
+    <h2 id="modalTitle" style="margin-top:0">Xem riêng</h2>
+    <div id="modalBody"></div>
+    <div class="btns" id="modalBtns"></div>
+    <div class="btns"><button class="ghost" id="modalClose">Đóng</button></div>
+  </div>
+</div>
+
+<script>
+var devicesEl = document.getElementById('devices');
+var emptyEl = document.getElementById('empty');
+var logEl = document.getElementById('log');
+var shots = {}; // deviceId -> base64 image
+var lastDevices = [];
+var prevRunSnapshot = '';
+
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+function logLine(text, kind) {
+  var t = new Date().toLocaleTimeString('vi-VN');
+  var div = document.createElement('div');
+  if (kind === true) div.className = 'ok-t';
+  else if (kind === false) div.className = 'err-t';
+  else if (kind === 'wait') div.className = 'wait-t';
+  else if (kind === 'checkin') div.className = 'checkin-t';
+  div.textContent = '[' + t + '] ' + text;
+  logEl.prepend(div);
+}
+function fmtAgo(ts) {
+  if (!ts) return '—';
+  var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return s + ' giây trước';
+  return Math.round(s / 60) + ' phút trước';
+}
+function errText(err) {
+  if (err === 'no_permission') return 'no_permission (mở Farm Agent trên máy, bấm “Cho phép chụp màn hình”)';
+  if (err === 'app_not_installed') return 'app_not_installed (máy chưa cài app này)';
+  if (err === 'not_device_owner') return 'not_device_owner (máy chưa ghi danh Device Owner nên không reset từ xa được)';
+  if (err === 'no_accessibility') return 'no_accessibility (chưa bật Trợ năng cho Farm Agent trên máy)';
+  if (err === 'no_focus') return 'no_focus (không có ô nhập nào đang được chọn trên màn hình máy)';
+  if (err === 'text_not_found') return 'text_not_found (không thấy chữ/nút này trên màn hình máy)';
+  if (err === 'bad_url') return 'bad_url (link không hợp lệ — phải bắt đầu bằng http:// hoặc https://)';
+  if (err === 'no_activity') return 'no_activity (không có app nào mở được link này)';
+  if (err === 'no_root') return 'no_root (không đọc được màn hình hiện tại)';
+  return err || 'không rõ lỗi';
+}
+
+function sendCmd(id, label, cmd, args) {
+  logLine(label + ' → gửi lệnh ' + cmd + ' ...', null);
+  return fetch('/api/cmd', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: id, cmd: cmd, args: args || {} })
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) {
+      var extra = '';
+      if (cmd === 'screenshot' && j.data && j.data.image) {
+        shots[id] = j.data.image;
+        extra = ' (đã nhận ảnh)';
+        renderDevices(lastDevices);
+      }
+      if (cmd === 'status' && j.data) {
+        extra = ' — pin ' + j.data.battery + '%, mạng ' + j.data.network + ', màn hình ' + (j.data.screenOn ? 'đang bật' : 'đang tắt');
+      }
+      logLine(label + ' → ' + cmd + ': THÀNH CÔNG' + extra, true);
+    } else {
+      logLine(label + ' → ' + cmd + ': LỖI ' + errText(j && j.error), false);
+    }
+    return j;
+  }).catch(function (e) {
+    logLine(label + ' → ' + cmd + ': LỖI kết nối server (' + e + ')', false);
+    return null;
+  });
+}
+
+function mkBtn(text, fn, cls) {
+  var b = el('button', cls || '', text);
+  b.onclick = fn;
+  return b;
+}
+
+// ---------- Danh sach may ----------
+function renderDevices(list) {
+  lastDevices = list;
+  document.getElementById('cTotal').textContent = list.length;
+  document.getElementById('cOnline').textContent = list.filter(function (d) { return d.online; }).length;
+  devicesEl.innerHTML = '';
+  emptyEl.style.display = list.length ? 'none' : 'block';
+  list.forEach(function (d) {
+    var card = el('div', 'card' + (d.online ? '' : ' off'));
+    var name = d.label || d.id;
+    var h = el('h2', '', '📱 ' + name + ' ');
+    var badge = el('span', 'badge ' + (d.online ? 'on' : 'offb'), d.online ? 'Online' : 'Offline');
+    h.appendChild(badge);
+    card.appendChild(h);
+
+    var meta = el('div', 'meta');
+    var lines = [
+      'Model: ' + (d.manufacturer ? d.manufacturer + ' ' : '') + (d.model || '—'),
+      'Android: ' + (d.android || '—') + ' · Pin: ' + ((d.battery === null || d.battery === undefined) ? '—' : (d.battery + '%' + (d.charging ? ' ⚡đang sạc' : ''))),
+      'Mạng: ' + (d.network || '—') + ' · Màn hình: ' + (d.screenOn ? 'đang bật' : 'đang tắt'),
+      'Lần cuối online: ' + fmtAgo(d.lastSeen) + (d.agentVersion ? ' · Agent v' + d.agentVersion : '')
+    ];
+    lines.forEach(function (t, i) {
+      meta.appendChild(document.createTextNode(t));
+      if (i < lines.length - 1) meta.appendChild(document.createElement('br'));
+    });
+    meta.appendChild(document.createElement('br'));
+    var bDo = el('span', 'badge ' + (d.deviceOwner ? 'b-do' : 'b-no'), d.deviceOwner ? 'Device Owner ✔' : 'Chưa Device Owner');
+    var bA = el('span', 'badge ' + (d.accessibility ? 'b-a11y' : 'b-no'), d.accessibility ? 'Trợ năng ✔' : 'Chưa Trợ năng');
+    meta.appendChild(bDo);
+    meta.appendChild(bA);
+    if (d.watch) {
+      meta.appendChild(document.createElement('br'));
+      var wTxt = null, wCls = 'b-no';
+      if (d.watch.status === 'watching' || d.watch.status === 'starting') { wTxt = '🐷 Đang quét game & xem video (' + d.watch.rounds + ' vòng)'; wCls = 'b-watch'; }
+      else if (d.watch.status === 'da_checkin') { wTxt = '🎉 ĐÃ CHECK-IN THÀNH CÔNG'; wCls = 'b-checkin'; }
+      else if (d.watch.status === 'error') { wTxt = 'Xem game: lỗi'; wCls = 'b-no'; }
+      else if (d.watch.status === 'stopped') { wTxt = 'Xem game: đã dừng'; wCls = 'b-no'; }
+      if (wTxt) meta.appendChild(el('span', 'badge ' + wCls, wTxt));
+      if (d.watch.note) meta.appendChild(el('div', 'small', d.watch.note));
+    }
+    card.appendChild(meta);
+
+    var btns = el('div', 'btns');
+    var dis = !d.online;
+    function addBtn(text, fn, cls) { var b = mkBtn(text, fn, cls); b.disabled = dis; btns.appendChild(b); }
+    addBtn('Trạng thái', function () { sendCmd(d.id, name, 'status', {}); });
+    addBtn('Đánh thức', function () { sendCmd(d.id, name, 'wake', {}); });
+    addBtn('Chụp màn hình', function () { sendCmd(d.id, name, 'screenshot', {}); });
+    addBtn('Mở TikTok Lite', function () { sendCmd(d.id, name, 'open_app', { 'package': 'com.zhiliaoapp.musically.go' }); });
+    if (d.watch && (d.watch.status === 'watching' || d.watch.status === 'starting')) {
+      addBtn('■ Dừng xem game', function () {
+        fetch('/api/watch/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIds: [d.id] }) })
+          .then(function (r) { return r.json(); }).then(function (j) {
+            logLine(name + ': đã dừng vòng xem game', j && j.ok);
+            refreshDevices();
+          });
+      }, 'warn');
+    } else {
+      addBtn('🐷 Quét game & xem video', function () {
+        var mins = parseInt((document.getElementById('watchMinutes') || {}).value, 10) || 30;
+        var gurl = ((document.getElementById('gameUrl') || {}).value || '').trim();
+        logLine(name + ': bật vòng quét game & xem video (' + mins + ' phút)...', null);
+        fetch('/api/watch/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIds: [d.id], minutes: mins, gameUrl: gurl }) })
+          .then(function (r) { return r.json(); }).then(function (j) {
+            var res = j && j.results && j.results[0];
+            if (res && res.ok) logLine(name + ': vòng xem game đã chạy', true);
+            else logLine(name + ': không bật được vòng xem (' + ((res && res.error) || (res && res.watch && res.watch.note) || '?') + ')', false);
+            refreshDevices();
+          }).catch(function (e) { logLine(name + ': lỗi bật vòng xem (' + e + ')', false); });
+      }, 'ghost');
+    }
+    addBtn('Xem riêng', function () { openModal(d); }, 'ghost');
+    card.appendChild(btns);
+
+    if (shots[d.id]) {
+      var shot = el('div', 'shot');
+      var img = document.createElement('img');
+      img.src = 'data:image/jpeg;base64,' + shots[d.id];
+      img.alt = 'Ảnh chụp màn hình';
+      shot.appendChild(img);
+      card.appendChild(shot);
+    }
+    devicesEl.appendChild(card);
+  });
+  renderPipeDeviceChecks(list);
+  renderAssignDevices(list);
+}
+
+// ---------- Modal xem rieng ----------
+var modalDev = null;
+function openModal(d) {
+  modalDev = d;
+  document.getElementById('modalTitle').textContent = 'Xem riêng — ' + (d.label || d.id);
+  var body = document.getElementById('modalBody');
+  body.innerHTML = '';
+  var p = el('p', 'meta', (d.manufacturer ? d.manufacturer + ' ' : '') + (d.model || '') + ' · Android ' + (d.android || '—') + ' · Pin ' + ((d.battery === null || d.battery === undefined) ? '—' : d.battery + '%') + ' · ' + (d.online ? 'Online' : 'Offline'));
+  body.appendChild(p);
+  if (shots[d.id]) {
+    var img = document.createElement('img');
+    img.src = 'data:image/jpeg;base64,' + shots[d.id];
+    img.alt = 'Ảnh chụp màn hình';
+    body.appendChild(img);
+  } else {
+    body.appendChild(el('p', 'small', 'Chưa có ảnh chụp màn hình — bấm “Chụp màn hình” để lấy ảnh mới.'));
+  }
+  var btns = document.getElementById('modalBtns');
+  btns.innerHTML = '';
+  function mb(text, fn, cls) { var b = mkBtn(text, fn, cls); b.disabled = !d.online; btns.appendChild(b); }
+  mb('Chụp màn hình mới', function () {
+    sendCmd(d.id, d.label || d.id, 'screenshot', {}).then(function () { openModal(devById(d.id) || d); });
+  });
+  mb('Mở TikTok Lite', function () { sendCmd(d.id, d.label || d.id, 'open_app', { 'package': 'com.zhiliaoapp.musically.go' }); });
+  mb('Mở LINE', function () { sendCmd(d.id, d.label || d.id, 'open_app', { 'package': 'jp.naver.line.android' }); });
+  mb('Đánh thức', function () { sendCmd(d.id, d.label || d.id, 'wake', {}); });
+  document.getElementById('modal').style.display = 'block';
+}
+function devById(id) {
+  for (var i = 0; i < lastDevices.length; i++) if (lastDevices[i].id === id) return lastDevices[i];
+  return null;
+}
+document.getElementById('modalClose').onclick = function () {
+  document.getElementById('modal').style.display = 'none';
+};
+document.getElementById('modal').addEventListener('click', function (e) {
+  if (e.target === this) this.style.display = 'none';
+});
+
+// ---------- Kho Gmail ----------
+function renderGmail(j) {
+  document.getElementById('cGmail').textContent = j.ready || 0;
+  var body = document.getElementById('gmailBody');
+  body.innerHTML = '';
+  (j.accounts || []).forEach(function (a) {
+    var tr = document.createElement('tr');
+    function td(text) { var c = el('td', '', text); tr.appendChild(c); return c; }
+    td(a.email);
+    td(a.passwordMasked || '********');
+    var stText = a.status === 'ready' ? 'Sẵn sàng' : (a.status === 'assigned' ? 'Đã cấp' : 'Die');
+    td(stText);
+    td(a.deviceId ? (nameOfDevice(a.deviceId)) : '—');
+    var ops = el('td', '');
+    if (a.status !== 'die') {
+      ops.appendChild(mkBtn('Đánh dấu die', function () {
+        fetch('/api/gmail/mark-die', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
+          .then(function (r) { return r.json(); }).then(function (x) {
+            logLine('Gmail ' + a.email + ': đã đánh dấu die', x && x.ok);
+            refreshGmail();
+          });
+      }, 'warn'));
+    }
+    ops.appendChild(document.createTextNode(' '));
+    ops.appendChild(mkBtn('Xoá', function () {
+      if (!confirm('Xoá tài khoản ' + a.email + ' khỏi kho?')) return;
+      fetch('/api/gmail/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
+        .then(function (r) { return r.json(); }).then(function (x) {
+          logLine('Gmail ' + a.email + ': đã xoá khỏi kho', x && x.ok);
+          refreshGmail();
+        });
+    }, 'danger'));
+    tr.appendChild(ops);
+    body.appendChild(tr);
+  });
+  if (!(j.accounts || []).length) {
+    var tr2 = document.createElement('tr');
+    var c = el('td', 'small', 'Kho đang trống — nhập tài khoản ở ô phía trên.');
+    c.colSpan = 5;
+    tr2.appendChild(c);
+    body.appendChild(tr2);
+  }
+}
+function nameOfDevice(id) {
+  var d = devById(id);
+  return d ? (d.label || d.id) : id;
+}
+function renderAssignDevices(list) {
+  var sel = document.getElementById('assignDevice');
+  var cur = sel.value;
+  sel.innerHTML = '';
+  list.forEach(function (d) {
+    var o = document.createElement('option');
+    o.value = d.id;
+    o.textContent = (d.label || d.id) + (d.online ? '' : ' (offline)');
+    sel.appendChild(o);
+  });
+  if (cur) sel.value = cur;
+}
+function refreshGmail() {
+  fetch('/api/gmail').then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) renderGmail(j);
+  }).catch(function () {});
+}
+document.getElementById('gmailImportBtn').onclick = function () {
+  var text = document.getElementById('gmailImportText').value;
+  if (!text.trim()) { document.getElementById('gmailMsg').textContent = 'Chưa nhập gì.'; return; }
+  fetch('/api/gmail/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      document.getElementById('gmailMsg').textContent = 'Đã thêm ' + j.added + ' tài khoản, bỏ qua ' + j.skipped + ' (trùng/không hợp lệ). Tổng kho: ' + j.total;
+      logLine('Nhập kho Gmail: +' + j.added + ', bỏ qua ' + j.skipped, true);
+      document.getElementById('gmailImportText').value = '';
+      refreshGmail();
+    }).catch(function (e) { logLine('Nhập kho Gmail lỗi: ' + e, false); });
+};
+document.getElementById('assignBtn').onclick = function () {
+  var deviceId = document.getElementById('assignDevice').value;
+  if (!deviceId) return;
+  fetch('/api/gmail/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) logLine('Đã cấp ' + j.account.email + ' cho máy ' + nameOfDevice(deviceId), true);
+      else logLine('Cấp Gmail thất bại: ' + ((j && j.error) || '?') + (j && j.error === 'pool_empty' ? ' (kho hết tài khoản sẵn sàng)' : ''), false);
+      refreshGmail();
+    });
+};
+document.getElementById('signinBtn').onclick = function () {
+  var deviceId = document.getElementById('assignDevice').value;
+  if (!deviceId) return;
+  logLine('Hỗ trợ đăng nhập → ' + nameOfDevice(deviceId) + ': đang gửi email + mật khẩu qua agent...', null);
+  fetch('/api/gmail/signin-assist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (!j) return;
+      if (j.error) { logLine('Hỗ trợ đăng nhập thất bại: ' + j.error, false); return; }
+      (j.steps || []).forEach(function (s) {
+        logLine('  • bước ' + s.step + ': ' + (s.ok ? 'OK' : 'LỖI ' + errText(s.error)), s.ok);
+      });
+      logLine('Hỗ trợ đăng nhập ' + j.email + ': ' + (j.ok ? 'xong' : 'chưa xong — xem bước lỗi phía trên'), j.ok);
+      refreshGmail();
+    }).catch(function (e) { logLine('Hỗ trợ đăng nhập lỗi: ' + e, false); });
+};
+
+// ---------- Pipeline ----------
+var currentRunId = null;
+function renderPipeDeviceChecks(list) {
+  var wrap = document.getElementById('pipeDevices');
+  var checked = {};
+  wrap.querySelectorAll('input[type=checkbox]').forEach(function (c) { checked[c.value] = c.checked; });
+  wrap.innerHTML = '';
+  if (!list.length) { wrap.appendChild(el('span', 'small', 'Chưa có máy nào.')); return; }
+  list.forEach(function (d) {
+    var lab = document.createElement('label');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = d.id;
+    cb.checked = checked[d.id] !== undefined ? checked[d.id] : d.online;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(' ' + (d.label || d.id) + (d.online ? '' : ' (offline)')));
+    wrap.appendChild(lab);
+  });
+}
+function loadPipelines() {
+  fetch('/api/pipelines').then(function (r) { return r.json(); }).then(function (j) {
+    var sel = document.getElementById('pipeSelect');
+    sel.innerHTML = '';
+    (j.pipelines || []).forEach(function (p) {
+      var o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.name;
+      sel.appendChild(o);
+    });
+  }).catch(function () {});
+}
+document.getElementById('pipeStart').onclick = function () {
+  var ids = [];
+  document.querySelectorAll('#pipeDevices input[type=checkbox]').forEach(function (c) { if (c.checked) ids.push(c.value); });
+  if (!ids.length) { document.getElementById('pipeMsg').textContent = 'Chưa chọn máy nào.'; return; }
+  var params = {
+    lineApkUrl: document.getElementById('lineUrl').value.trim(),
+    tiktokApkUrl: document.getElementById('tiktokUrl').value.trim(),
+    gameUrl: document.getElementById('gameUrl').value.trim(),
+    minutes: parseInt(document.getElementById('watchMinutes').value, 10) || 30
+  };
+  fetch('/api/pipeline/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipelineId: document.getElementById('pipeSelect').value, deviceIds: ids, params: params })
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) {
+      currentRunId = j.runId;
+      document.getElementById('pipeStop').disabled = false;
+      document.getElementById('pipeMsg').textContent = 'Đã bắt đầu: ' + j.runId;
+      logLine('Pipeline bắt đầu (' + j.runId + ') cho ' + ids.length + ' máy', true);
+      prevRunSnapshot = '';
+      refreshRuns();
+    } else {
+      document.getElementById('pipeMsg').textContent = 'Lỗi: ' + ((j && j.error) || '?');
+      logLine('Pipeline không bắt đầu được: ' + ((j && j.error) || '?'), false);
+    }
+  });
+};
+document.getElementById('pipeStop').onclick = function () {
+  if (!currentRunId) return;
+  fetch('/api/pipeline/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: currentRunId }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      logLine('Đã dừng pipeline ' + currentRunId, j && j.ok);
+      document.getElementById('pipeStop').disabled = true;
+      refreshRuns();
+    });
+};
+function stepIcon(s) {
+  if (s === 'done') return '✔';
+  if (s === 'error') return '✘';
+  if (s === 'running') return '⏳';
+  if (s === 'waiting_manual') return '✋';
+  if (s === 'skipped') return '⏭';
+  if (s === 'stopped') return '■';
+  return '•';
+}
+function renderRuns(j) {
+  var waiting = 0;
+  (j.runs || []).forEach(function (r) {
+    r.devices.forEach(function (dr) { if (dr.status === 'waiting_manual') waiting++; });
+  });
+  document.getElementById('cManual').textContent = waiting;
+
+  // Ghi nhat ky khi trang thai thay doi
+  var snap = JSON.stringify((j.runs || []).map(function (r) {
+    return [r.id, r.devices.map(function (d) { return d.deviceId + ':' + d.status + ':' + d.currentStep; }).join(',')].join('|');
+  }));
+  if (prevRunSnapshot && snap !== prevRunSnapshot) {
+    (j.runs || []).forEach(function (r) {
+      r.devices.forEach(function (dr) {
+        if (dr.status === 'waiting_manual') logLine('✋ ' + nameOfDevice(dr.deviceId) + ' đang CHỜ CHẠM TAY (' + r.pipelineName + ')', 'wait');
+        if (dr.status === 'done') logLine('🎉 ' + nameOfDevice(dr.deviceId) + ' đã chạy xong pipeline ' + r.pipelineName, true);
+        if (dr.status === 'error') logLine('⚠ ' + nameOfDevice(dr.deviceId) + ' lỗi ở pipeline ' + r.pipelineName, false);
+      });
+    });
+  }
+  prevRunSnapshot = snap;
+
+  var wrap = document.getElementById('runs');
+  wrap.innerHTML = '';
+  (j.runs || []).slice(0, 3).forEach(function (r) {
+    var box = el('div', 'runbox');
+    var h = el('h3', '', r.pipelineName + ' — ' + r.id + ' · bắt đầu ' + new Date(r.startedAt).toLocaleTimeString('vi-VN') + (r.stopped ? ' · ĐÃ DỪNG' : ''));
+    box.appendChild(h);
+    r.devices.forEach(function (dr) {
+      var dwrap = el('div', 'devrun');
+      var head = el('div', '');
+      head.appendChild(el('span', '', '📱 ' + nameOfDevice(dr.deviceId) + ' — '));
+      head.appendChild(el('span', 'st st-' + dr.status, dr.status === 'waiting_manual' ? 'CHỜ CHẠM TAY' : dr.status));
+      if (dr.status === 'waiting_manual') {
+        head.appendChild(document.createTextNode(' '));
+        head.appendChild(mkBtn('Đã xử lý — chạy tiếp', function () {
+          fetch('/api/pipeline/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: r.id, deviceId: dr.deviceId }) })
+            .then(function (x) { return x.json(); }).then(function (y) {
+              logLine('Đã cho ' + nameOfDevice(dr.deviceId) + ' chạy tiếp sau bước chạm tay', y && y.ok);
+              refreshRuns();
+            });
+        }, 'warn'));
+      }
+      dwrap.appendChild(head);
+      var ul = el('ol', 'steps');
+      dr.steps.forEach(function (s) {
+        var li = el('li', s.status, stepIcon(s.status) + ' ' + s.name + (s.note ? ' — ' + s.note : ''));
+        ul.appendChild(li);
+      });
+      dwrap.appendChild(ul);
+      box.appendChild(dwrap);
+    });
+    wrap.appendChild(box);
+  });
+}
+function refreshRuns() {
+  fetch('/api/pipeline/runs').then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) renderRuns(j);
+  }).catch(function () {});
+}
+
+// ---------- QR ghi danh ----------
+var qrText = '';
+document.getElementById('qrLoad').onclick = function () {
+  fetch('/api/provision/qr').then(function (r) { return r.json(); }).then(function (j) {
+    var pre = document.getElementById('qrPre');
+    pre.style.display = 'block';
+    if (j && j['android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME']) {
+      qrText = JSON.stringify(j, null, 2);
+      pre.textContent = qrText;
+      document.getElementById('qrCopy').disabled = false;
+      logLine('Đã tải nội dung QR ghi danh Device Owner', true);
+    } else {
+      pre.textContent = 'Lỗi: ' + JSON.stringify(j);
+      logLine('Không tải được nội dung QR: ' + ((j && j.error) || '?'), false);
+    }
+  }).catch(function (e) { logLine('Lỗi tải QR: ' + e, false); });
+};
+document.getElementById('qrCopy').onclick = function () {
+  if (navigator.clipboard && qrText) {
+    navigator.clipboard.writeText(qrText).then(function () { logLine('Đã chép JSON ghi danh — dán vào trang tạo mã QR bất kỳ', true); });
+  }
+};
+
+// ---------- Su kien tu server (check-in, vong xem game) ----------
+var lastEventId = 0;
+function refreshEvents() {
+  fetch('/api/events?since=' + lastEventId).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !j.ok) return;
+    document.getElementById('cCheckin').textContent = j.checkinSuccess || 0;
+    (j.events || []).forEach(function (ev) {
+      if (ev.id > lastEventId) lastEventId = ev.id;
+      var who = ev.label || ev.deviceId || 'Server';
+      if (ev.type === 'checkin_success') logLine('🎉 ' + who + ' — ' + ev.message, 'checkin');
+      else if (ev.type === 'watch_start') logLine('🐷 ' + who + ' — ' + ev.message, null);
+      else if (ev.type === 'watch_stop') logLine('🐷 ' + who + ' — ' + ev.message, null);
+      else if (ev.type === 'watch_error') logLine('🐷 ' + who + ' — ' + ev.message, false);
+      else logLine(who + ' — ' + ev.message, null);
+    });
+    if (j.lastEventId && j.lastEventId > lastEventId) lastEventId = j.lastEventId;
+  }).catch(function () {});
+}
+
+// ---------- Lam moi dinh ky ----------
+function refreshInfo() {
+  fetch('/api/info').then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) {
+      document.getElementById('serverInfo').textContent =
+        'Server online · WiFi/LAN IP: ' + j.lanIp + ' · Cổng agent: ' + j.tcpPort + ' · Dashboard: ' + j.httpPort + ' · Tự làm mới mỗi 3 giây';
+    }
+  }).catch(function () {
+    document.getElementById('serverInfo').textContent = 'Mất kết nối tới server';
+  });
+}
+function refreshDevices() {
+  fetch('/api/devices').then(function (r) { return r.json(); }).then(function (j) {
+    renderDevices(j.devices || []);
+  }).catch(function () {});
+}
+refreshInfo();
+refreshDevices();
+refreshGmail();
+loadPipelines();
+refreshRuns();
+refreshEvents();
+setInterval(function () { refreshDevices(); refreshGmail(); refreshRuns(); refreshEvents(); }, 3000);
+logLine('Dashboard Giai đoạn 3 đã mở. Đang chờ máy kết nối...', null);
+</script>
+</body>
+</html>

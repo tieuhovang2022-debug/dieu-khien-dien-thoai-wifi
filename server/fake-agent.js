@@ -1,0 +1,207 @@
+// fake-agent.js — May test ao cho Farm Control Giai doan 3.
+// Ket noi TCP vao server nhu mot dien thoai that, gui hello + heartbeat,
+// tra loi cac lenh co ban + lenh Giai doan 2 (tap/swipe/input_text/key/
+// factory_reset) + lenh Giai doan 3 (dump_ui/tap_text/wait_text/open_url).
+// Dung de kiem chung server + dashboard + giao thuc ma khong can dien
+// thoai that.
+// Chay: node fake-agent.js [host] [port]   (mac dinh 127.0.0.1:8787)
+// Bien moi truong mo phong:
+//   FAKE_DEVICE_OWNER=1  -> status bao deviceOwner:true, factory_reset tra ok
+//                           (mac dinh: deviceOwner:false, factory_reset tra loi not_device_owner)
+//   FAKE_ACCESSIBILITY=0 -> status bao accessibility:false, lenh thao tac tra loi no_accessibility
+//                           (mac dinh: accessibility:true)
+//   FAKE_NO_FOCUS=1      -> input_text tra loi no_focus
+//   FAKE_CHECKIN_AFTER=n -> tu lan dump_ui thu n tro di, trong danh sach node
+//                           xuat hien chu "チェックイン完了" (mo phong man
+//                           hinh bao check-in thanh cong cho vong xem game)
+'use strict';
+const net = require('net');
+
+const HOST = process.argv[2] || '127.0.0.1';
+const PORT = process.argv[3] ? parseInt(process.argv[3], 10) : 8787;
+const ANDROID_ID = process.env.FAKE_ANDROID_ID || 'fake-device-001';
+const IS_DEVICE_OWNER = process.env.FAKE_DEVICE_OWNER === '1';
+const HAS_ACCESSIBILITY = process.env.FAKE_ACCESSIBILITY !== '0';
+const NO_FOCUS = process.env.FAKE_NO_FOCUS === '1';
+const CHECKIN_AFTER = process.env.FAKE_CHECKIN_AFTER ? parseInt(process.env.FAKE_CHECKIN_AFTER, 10) : 0;
+let dumpCount = 0;
+// Anh JPEG 8x8 hop le (tao san), chi de chung minh duong truyen anh hoat dong.
+const TINY_JPEG_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD02iiiu44T/9k=';
+
+let battery = 87;
+const sock = net.connect(PORT, HOST, () => {
+  console.log('[fake-agent] da ket noi ' + HOST + ':' + PORT);
+  send({
+    type: 'hello',
+    label: 'Máy test ảo',
+    model: 'Xperia XZ2 (fake)',
+    manufacturer: 'Sony',
+    android: '10',
+    sdk: 29,
+    androidId: ANDROID_ID,
+    battery: battery,
+    agentVersion: '3.0-fake',
+    deviceOwner: IS_DEVICE_OWNER,
+    accessibility: HAS_ACCESSIBILITY
+  });
+  setInterval(() => {
+    battery = Math.max(80, battery - 1);
+    send(statusMsg());
+  }, 5000);
+});
+
+sock.setEncoding('utf8');
+let buffer = '';
+sock.on('data', (chunk) => {
+  buffer += chunk;
+  let idx;
+  while ((idx = buffer.indexOf('\n')) >= 0) {
+    const line = buffer.slice(0, idx).trim();
+    buffer = buffer.slice(idx + 1);
+    if (!line) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch (e) { continue; }
+    if (msg && msg.cmd) handleCmd(msg);
+  }
+});
+sock.on('error', (e) => { console.error('[fake-agent] loi:', e.message); process.exit(1); });
+sock.on('close', () => { console.log('[fake-agent] server dong ket noi'); process.exit(0); });
+
+function statusMsg() {
+  return {
+    type: 'status',
+    battery: battery,
+    charging: false,
+    network: 'wifi',
+    screenOn: true,
+    deviceOwner: IS_DEVICE_OWNER,
+    accessibility: HAS_ACCESSIBILITY
+  };
+}
+
+function send(obj) {
+  sock.write(JSON.stringify(obj) + '\n', 'utf8');
+}
+
+function result(id, ok, error, data) {
+  const m = { type: 'result', id: id, ok: ok };
+  if (error) m.error = error;
+  if (data) m.data = data;
+  send(m);
+}
+
+// Danh sach node gia lap cua "man hinh TikTok Lite" — dung cho dump_ui /
+// tap_text / wait_text. Khi FAKE_CHECKIN_AFTER dat va so lan dump_ui da
+// dat nguong, node bao check-in thanh cong xuat hien (nhu man hinh that
+// sau khi heo nhay).
+function fakeNodes() {
+  const nodes = [
+    { text: 'TikTok Lite', desc: '', className: 'android.widget.TextView', bounds: [24, 80, 500, 140], clickable: false },
+    { text: 'スキップ', desc: '', className: 'android.widget.TextView', bounds: [880, 60, 1056, 120], clickable: true },
+    { text: '動画を見てポイントを貯めよう', desc: '', className: 'android.widget.TextView', bounds: [100, 900, 980, 980], clickable: false },
+    { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [140, 2100, 940, 2220], clickable: true },
+    { text: '', desc: 'プロフィール', className: 'android.widget.ImageView', bounds: [940, 2200, 1060, 2340], clickable: true }
+  ];
+  if (CHECKIN_AFTER > 0 && dumpCount >= CHECKIN_AFTER) {
+    nodes.push({ text: 'チェックイン完了', desc: '', className: 'android.widget.TextView', bounds: [240, 1100, 840, 1180], clickable: false });
+    nodes.push({ text: 'ポイントを獲得しました', desc: '', className: 'android.widget.TextView', bounds: [240, 1200, 840, 1280], clickable: false });
+  }
+  return nodes;
+}
+
+function findFakeNode(text, match) {
+  const nodes = fakeNodes();
+  for (const n of nodes) {
+    const cands = [n.text || '', n.desc || ''];
+    for (const c of cands) {
+      if (!c) continue;
+      if (match === 'exact' ? c === text : c.indexOf(text) >= 0) return n;
+    }
+  }
+  return null;
+}
+
+function handleCmd(msg) {
+  const args = msg.args || {};
+  console.log('[fake-agent] nhan lenh:', msg.cmd, JSON.stringify(args));
+  switch (msg.cmd) {
+    case 'status':
+      result(msg.id, true, null, {
+        battery: battery, charging: false, network: 'wifi', screenOn: true,
+        label: 'Máy test ảo', model: 'Xperia XZ2 (fake)', android: '10',
+        deviceOwner: IS_DEVICE_OWNER, accessibility: HAS_ACCESSIBILITY
+      });
+      break;
+    case 'open_app':
+      result(msg.id, true, null, { opened: args['package'] || '' });
+      break;
+    case 'wake':
+      result(msg.id, true, null, { awake: true });
+      break;
+    case 'install_url':
+      result(msg.id, true, null, { installer: 'opened (fake)', url: args.url || '' });
+      break;
+    case 'screenshot':
+      result(msg.id, true, null, { image: TINY_JPEG_B64 });
+      break;
+    case 'factory_reset':
+      if (IS_DEVICE_OWNER) result(msg.id, true, null, { wiping: true });
+      else result(msg.id, false, 'not_device_owner', null);
+      break;
+    case 'tap':
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      result(msg.id, true, null, { tapped: { x: args.x || 0, y: args.y || 0 } });
+      break;
+    case 'swipe':
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      result(msg.id, true, null, { swiped: { x1: args.x1 || 0, y1: args.y1 || 0, x2: args.x2 || 0, y2: args.y2 || 0 } });
+      break;
+    case 'input_text':
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      if (NO_FOCUS) { result(msg.id, false, 'no_focus', null); break; }
+      result(msg.id, true, null, { typedLength: (args.text || '').length });
+      break;
+    case 'key':
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      result(msg.id, true, null, { key: args.key || '' });
+      break;
+    case 'dump_ui': {
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      dumpCount++;
+      const nodes = fakeNodes();
+      result(msg.id, true, null, { nodes: nodes, count: nodes.length });
+      break;
+    }
+    case 'tap_text': {
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      const hit = findFakeNode(args.text || '', args.match || 'contains');
+      if (!hit) { result(msg.id, false, 'text_not_found', null); break; }
+      result(msg.id, true, null, {
+        tapped: true,
+        text: hit.text || hit.desc || '',
+        bounds: hit.bounds,
+        x: Math.round((hit.bounds[0] + hit.bounds[2]) / 2),
+        y: Math.round((hit.bounds[1] + hit.bounds[3]) / 2)
+      });
+      break;
+    }
+    case 'wait_text': {
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      const hit = findFakeNode(args.text || '', 'contains');
+      result(msg.id, true, null, { found: !!hit });
+      break;
+    }
+    case 'open_url': {
+      if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      const url = args.url || '';
+      if (!url || (url.indexOf('http://') !== 0 && url.indexOf('https://') !== 0)) {
+        result(msg.id, false, 'bad_url', null);
+        break;
+      }
+      result(msg.id, true, null, { opened: url });
+      break;
+    }
+    default:
+      result(msg.id, false, 'unknown_cmd', null);
+  }
+}
