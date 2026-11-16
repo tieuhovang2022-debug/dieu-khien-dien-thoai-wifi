@@ -643,3 +643,79 @@ LƯU Ý: kiểm chứng vẫn bằng fake agent — nhưng fake nay mô phỏng
 mật khẩu ngay ở bước email, và lần nhập đầu bị "rớt"). Cần chạy
 lại flow Cấp Gmail trên máy SOV37 thật (bản 3.2.3) để xác nhận
 dứt điểm.
+
+## Giai đoạn 3.2.4 (hotfix, 2026-11-16) — bàn phím IME còn mở làm lệch tọa độ nút Tiếp theo
+
+### Chẩn đoán của người dùng (máy thật Sony SOV37, chạy bản 3.2.3, ~22:40)
+
+Sau khi bản 3.2.3 chạy trên máy thật, flow vẫn không bấm được nút
+Tiếp theo ở bước nhập email. Người dùng trực tiếp quan sát máy và
+chỉ ra nguyên nhân: **sau khi nhập xong, bàn phím tiếng Nhật vẫn
+mở, và cây accessibility báo bounds (tọa độ) của nút 次へ bị lệch
+khỏi vị trí thật** — nên mọi lần chạm theo bounds đó (kể cả các
+lần thử lại của vòng lặp 3.2.3, tất cả đều dùng cùng bounds sai)
+đều chạm sai chỗ và trang không bao giờ chuyển. Gợi ý của người
+dùng: nhập xong phải tắt bàn phím đi để máy nhận diện đúng vị
+trí nút bấm.
+
+### Cách sửa (chỉ server/server.js — agent và flow-config KHÔNG đổi)
+
+- Helper mới `dismissKeyboard(deviceId, log)`: gửi lệnh agent
+  `key` với `back`, rồi nghỉ ~800ms cho bố cục ổn định. Lệnh key
+  lỗi thì ghi log (console) rồi vẫn thử bấm nút tiếp như thường.
+- Chèn vào **cả 4 bước nhập** của hai trình tự đăng nhập
+  (gmailSigninSequence: email + mật khẩu; tiktokLoginSequence:
+  tài khoản + mật khẩu): ngay **sau khi input_text thành công +
+  xác minh sau-nhập đạt**, và **trước** lần bấm nút chuyển bước
+  bằng tapMarkerWithRetry. tapMarkerWithRetry quét dump lại từng
+  lần nên sau khi bàn phím đóng nó đọc được bounds ĐÚNG.
+- Phím Back chỉ được gửi ngay sau một lần nhập trong cùng vòng
+  lặp của bước (lúc đó bàn phím chắc chắn đang mở vì vừa nhập
+  xong) — không gửi ở bất kỳ điểm nào khác, nên Back không thể
+  làm rời khỏi flow đăng nhập. Nếu vòng lặp chạy lại (trang chưa
+  chuyển), bước nhập lại từ đầu (bàn phím mở lại) và lại tắt
+  trước khi bấm — đối xứng.
+- Mọi cơ chế 3.2.1–3.2.3 giữ nguyên: phân loại nghiêm ngặt,
+  vòng lặp thử-lại-tới-khi-chuyển-trang (~5 giây, trần ~5
+  phút/bước), dừng Chờ chạm tay khi gặp xác minh, tôn trọng
+  Stop, che mật khẩu.
+
+### Fake agent — mô phỏng thêm
+
+- Env mới `FAKE_KEYBOARD_SHIFT=1`: sau input_text thành công,
+  fake đánh dấu "bàn phím mở"; khi đang mở, dump_ui báo bounds
+  của nút 次へ/ログイン **lệch +600px theo trục y**; mô phỏng
+  chạm theo tọa độ chỉ trúng khi điểm chạm nằm trong bounds
+  THẬT của node (tap/tap_text vẫn xét theo bounds thật như
+  agent thật) nên chạm theo bounds lệch sẽ trượt. Nhận lệnh
+  `key back` thì bàn phím đóng (cmdLog ghi thêm dòng `key:back`)
+  và dump lại báo bounds đúng. Tắt env thì mọi hành vi đúng
+  như trước — các script kiểm chứng cũ không đổi kết quả.
+
+### Kết quả kiểm chứng (fake agent, vòng kín)
+
+**verify-stage324.js (mới): 18 PASS, 0 FAIL.**
+- (a) Với FAKE_KEYBOARD_SHIFT=1: flow `cap-gmail-tu-dong` vẫn
+  `done` ngay vòng nhập đầu tiên (không có sự kiện thử-lại);
+  cmdLog đúng thứ tự `open_google_signin → input_text(email) →
+  key:back → tap_text:次へ → input_text(password):******** →
+  key:back → tap_text:次へ` — `key:back` nằm giữa mỗi lần nhập
+  và lần bấm nút thành công ở cả hai bước.
+- (b) Không đặt env: flow `done`, thứ tự lệnh (lọc bỏ
+  `key:back`) đúng như các bản trước.
+- (c) Quét toàn bộ thân mọi response API trong phiên +
+  /api/events: mật khẩu thử (2 tài khoản) KHÔNG xuất hiện ở đâu.
+
+**Chạy lại hồi quy: verify-stage2.js 38 PASS, 0 FAIL;
+verify-stage3.js 41 PASS, 0 FAIL; verify-stage31.js 29 PASS,
+0 FAIL; verify-stage32.js 54 PASS, 0 FAIL; verify-stage321.js
+18 PASS, 0 FAIL; verify-stage322.js 16 PASS, 0 FAIL;
+verify-stage323.js 25 PASS, 0 FAIL** — đúng nguyên số đếm
+trước hotfix, không hồi quy.
+
+LƯU Ý: kiểm chứng vẫn bằng fake agent — nhưng fake nay mô
+phỏng đúng hiện tượng máy thật do người dùng chẩn đoán (bàn
+phím mở làm lệch bounds nút). Cần chạy lại flow Cấp Gmail trên
+máy SOV37 thật (bản 3.2.4) để xác nhận dứt điểm.
+- Chạy thêm verify-stage324.js trên bản server ĐÃ ĐÓNG GÓI trong
+  thư mục giao hàng (farm-agent-giai-doan-3-2-4): 18 PASS, 0 FAIL.

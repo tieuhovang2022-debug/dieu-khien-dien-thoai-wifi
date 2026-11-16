@@ -61,6 +61,18 @@
 //                           that). Lenh van tra ok va van ghi cmdLog
 //                           binh thuong. Flow phai tu nhap LAI ca
 //                           buoc email (vong lap thu lai) moi xong.
+//   FAKE_KEYBOARD_SHIFT=1 -> (Hotfix 3.2.4) mo phong dung chan doan
+//                           cua nguoi dung tren may that (Sony
+//                           SOV37, 2026-11-16 ~22:40): sau khi nhap,
+//                           ban phim IME van mo va dump_ui bao bounds
+//                           cua nut 次へ/ログイン LECH +600px theo
+//                           truc y — cham theo bounds lech do thi
+//                           truot (mo phong cham chi trung khi diem
+//                           cham nam trong bounds THAT cua node).
+//                           Nhan lenh key 'back' thi ban phim dong,
+//                           dump lai bao bounds dung. Tat env (mac
+//                           dinh) thi moi hanh vi dung nhu cu — cac
+//                           script kiem chung cu khong thay doi.
 // Mo phong o nhap (Hotfix 3.2.3): sau khi input_text thanh cong, o
 // EditText cua man hinh hien tai GIU LAI noi dung da nhap trong
 // dump_ui (man hinh email/username: text that; man hinh mat khau:
@@ -98,6 +110,11 @@ const FAKE_TT_VERIFY = process.env.FAKE_TT_VERIFY === '1';
 const DELAY_NEXT = process.env.FAKE_DELAY_NEXT ? parseInt(process.env.FAKE_DELAY_NEXT, 10) : 0;
 const SIGNIN_BOTH_MARKERS = process.env.FAKE_SIGNIN_BOTH_MARKERS === '1';
 const DROP_FIRST_INPUT = process.env.FAKE_DROP_FIRST_INPUT === '1';
+const KEYBOARD_SHIFT = process.env.FAKE_KEYBOARD_SHIFT === '1';
+// Ban phim IME dang mo (mo phong 3.2.4): mo sau input_text thanh
+// cong, dong khi nhan key 'back' hoac khi doi man hinh (open_app /
+// open_google_signin). Chi co tac dung khi KEYBOARD_SHIFT=1.
+let keyboardOpen = false;
 // So lan input_text thanh cong tren man hinh email Google con bi
 // "rot" (chi dem khi FAKE_DROP_FIRST_INPUT=1).
 let dropFirstInputLeft = DROP_FIRST_INPUT ? 1 : 0;
@@ -308,6 +325,25 @@ function visibleSigninNodes() {
   return nodes;
 }
 
+/**
+ * Bounds node se bao trong dump_ui: khi FAKE_KEYBOARD_SHIFT=1 va
+ * ban phim dang mo, node nut 次へ/ログイン bi lech +600px theo truc
+ * y (mo phong may that bao sai toa do nut khi ban phim IME con mo —
+ * hotfix 3.2.4). CHI dump_ui dung ban lech nay; mo phong cham
+ * (tap theo toa do / tap_text) van xet theo bounds THAT trong
+ * currentNodes() — cham vao toa do lech se truot nhu may that.
+ */
+function applyKeyboardShift(nodes) {
+  if (!KEYBOARD_SHIFT || !keyboardOpen) return nodes;
+  return nodes.map((n) => {
+    if (n.className && n.className.indexOf('Button') >= 0 &&
+        (n.text === '次へ' || n.text === 'ログイン') && Array.isArray(n.bounds)) {
+      return Object.assign({}, n, { bounds: [n.bounds[0], n.bounds[1] + 600, n.bounds[2], n.bounds[3] + 600] });
+    }
+    return n;
+  });
+}
+
 /** Node cua man hinh hien tai: dang o man hinh dang nhap thi tra node dang nhap. */
 function currentNodes() {
   if (signinState !== 'none') return visibleSigninNodes();
@@ -375,6 +411,7 @@ function handleCmd(msg) {
       // va ve feed TikTok (ttLoginState ve none); cac o nhap lam moi lai
       signinState = 'none';
       ttLoginState = 'none';
+      keyboardOpen = false;
       emailFieldText = ''; passwordFieldText = ''; ttUserFieldText = ''; ttPassFieldText = '';
       result(msg.id, true, null, { opened: args['package'] || '' });
       break;
@@ -383,6 +420,7 @@ function handleCmd(msg) {
       signinState = 'email';
       signinDumpCounts = { email: 0, password: 0 };
       emailFieldText = ''; passwordFieldText = '';
+      keyboardOpen = false;
       result(msg.id, true, null, { opened: 'google_signin' });
       break;
     case 'wake':
@@ -449,10 +487,16 @@ function handleCmd(msg) {
       else if (ttLoginState === 'username') { ttUserFieldText = args.text || ''; logCmd('input_text(ttuser):' + (args.text || '')); }
       else if (ttLoginState === 'password') { ttPassFieldText = args.text || ''; logCmd('input_text(password):********'); }
       else logCmd('input_text:' + (args.text || ''));
+      // Nhap thanh cong = ban phim IME dang mo (mo phong 3.2.4)
+      keyboardOpen = true;
       result(msg.id, true, null, { typedLength: (args.text || '').length });
       break;
     case 'key':
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      // Phim Back dong ban phim IME (mo phong 3.2.4) — dump_ui sau
+      // do lai bao bounds DUNG cua cac nut. Ghi cmdLog "key:back"
+      // de script kiem chung thay duoc buoc tat ban phim.
+      if ((args.key || '') === 'back') { keyboardOpen = false; logCmd('key:back'); }
       result(msg.id, true, null, { key: args.key || '' });
       break;
     case 'dump_ui': {
@@ -462,19 +506,19 @@ function handleCmd(msg) {
       // Rieng bo dem cua FAKE_DELAY_NEXT thi co dem theo man hinh.
       if (signinState !== 'none') {
         if (signinState === 'email' || signinState === 'password') signinDumpCounts[signinState]++;
-        const sn = visibleSigninNodes();
+        const sn = applyKeyboardShift(visibleSigninNodes());
         result(msg.id, true, null, { nodes: sn, count: sn.length });
         break;
       }
       // Dang o man hinh dang nhap TikTok Lite: tra node dang nhap TikTok,
       // cung KHONG dem vao bo dem check-in.
       if (ttLoginState !== 'none') {
-        const tn = ttLoginNodes();
+        const tn = applyKeyboardShift(ttLoginNodes());
         result(msg.id, true, null, { nodes: tn, count: tn.length });
         break;
       }
       dumpCount++;
-      const nodes = fakeNodes();
+      const nodes = applyKeyboardShift(fakeNodes());
       result(msg.id, true, null, { nodes: nodes, count: nodes.length });
       break;
     }

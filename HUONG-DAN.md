@@ -1,5 +1,36 @@
 # Farm Control — Giai đoạn 3.2: Hướng dẫn
 
+> **BẢN 3.2.4 (hotfix, 2026-11-16)** — Sửa lỗi vẫn không bấm
+> được nút Tiếp theo trên máy thật (Sony SOV37) khi chạy bản
+> 3.2.3 — nguyên nhân do chính huynh quan sát máy và chỉ ra:
+> sau khi nhập xong, **bàn phím tiếng Nhật vẫn mở và máy báo
+> tọa độ của nút Tiếp theo bị lệch** khỏi vị trí thật, nên mọi
+> lần chạm (kể cả các lần thử lại của bản 3.2.3) đều chạm sai
+> chỗ và trang không chuyển. Bản 3.2.4: ở mỗi bước nhập
+> (email + mật khẩu Google, tài khoản + mật khẩu TikTok Lite),
+> ngay sau khi nhập xong và kiểm tra giá trị đã nhập, server
+> **tự tắt bàn phím (phím Back), nghỉ ~0,8 giây cho màn hình
+> ổn định, rồi mới bấm nút** theo tọa độ đúng vừa đọc lại.
+> Phím Back chỉ được gửi ngay sau khi vừa nhập (bàn phím chắc
+> chắn đang mở) nên không làm thoát khỏi màn hình đăng nhập.
+> Các cơ chế của 3.2.3 (phân loại màn hình nghiêm ngặt, tự
+> thử lại sau ~5 giây tới khi chuyển trang, dừng ngay khi bị
+> đòi xác minh) giữ nguyên. Marker nhận diện KHÔNG đổi; app
+> Farm Agent KHÔNG đổi (vẫn v3.1, không cần cài lại).
+>
+> **Cách cập nhật lên 3.2.4:** (1) Dừng server cũ (Ctrl+C
+> trong cửa sổ Terminal đang chạy server). (2) Giải nén gói
+> 3.2.4. (3) Chép **toàn bộ file trong thư mục `data/` của
+> server cũ** (bản đang dùng) đè sang thư mục `data/` của
+> server 3.2.4 — để giữ kho Gmail, kho heo, link game và tiến
+> độ điểm danh. (4) Vào thư mục `server` của bản 3.2.4 và
+> chạy `node server.js`.
+>
+> **⚠️ QUAN TRỌNG: sau khi chép file `data/` xong và chạy
+> server mới, hãy mở tab "Kho dữ liệu" trên trang điều khiển
+> và KIỂM TRA kho Gmail / kho heo đã hiện đúng tài khoản của
+> huynh CHƯA, rồi mới chạy bất cứ tác vụ nào.**
+
 > **BẢN 3.2.3 (hotfix, 2026-11-16)** — Sửa lỗi NGUY HIỂM gặp trên
 > máy thật (Sony SOV37) khi chạy bản 3.2.2: kho Gmail hoàn toàn
 > đúng (email đầy đủ, đã cấp cho máy), nhưng flow lại **gõ mật

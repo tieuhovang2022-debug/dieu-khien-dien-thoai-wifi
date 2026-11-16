@@ -928,6 +928,39 @@ async function inputTextWithRetry(deviceId, text, opts) {
   return { ok: false, error: lastError, attempts: attempts };
 }
 
+/**
+ * Hotfix 3.2.4 — TAT BAN PHIM truoc khi bam nut chuyen buoc.
+ * Chan doan cua nguoi dung khi xem may that (Sony SOV37, 2026-11-16
+ * ~22:40, sau khi ban 3.2.3 van khong bam duoc nut Tiep theo): sau
+ * khi nhap, ban phim IME tieng Nhat van MO va cay accessibility bao
+ * toa do (bounds) cua nut 次へ LECH khoi vi tri that, nen moi lan
+ * cham theo bounds do (ke ca cac lan thu lai cua vong lap 3.2.3)
+ * deu cham sai cho va trang khong bao gio chuyen. Cach sua: ngay
+ * sau khi nhap + xac minh xong, trong CUNG mot vong lap cua buoc,
+ * gui lenh key 'back' de dong ban phim (luc do ban phim chac chan
+ * dang mo vi vua nhap xong — Back chi dong ban phim, khong roi
+ * khoi man hinh dang nhap), nghi ~800ms cho bo cuc on dinh, roi
+ * moi cham nut bang tapMarkerWithRetry (helper do quet dump lai
+ * tung lan nen doc duoc bounds DUNG sau khi ban phim da dong).
+ * Lenh key loi thi ghi log roi van thu bam nut nhu thuong.
+ * CHI goi helper nay ngay sau mot lan nhap thanh cong trong cung
+ * vong lap cua buoc nhap — khong goi o bat ky diem nao khac, de
+ * phim Back khong bao gio lam roi khoi flow dang nhap.
+ */
+async function dismissKeyboard(deviceId, log) {
+  try {
+    const res = await sendCommand(deviceId, 'key', { key: 'back' }, 15000);
+    if (res && res.ok) {
+      if (log) log('Đã tắt bàn phím trước khi bấm nút (để máy nhận diện đúng vị trí nút)');
+    } else {
+      console.log('[keyboard] lenh key back tra loi ' + ((res && res.error) || 'unknown') + ' — van thu bam nut tiep');
+    }
+  } catch (e) {
+    console.log('[keyboard] khong gui duoc lenh key back: ' + (e && e.message || e) + ' — van thu bam nut tiep');
+  }
+  await sleepMs(800);
+}
+
 // ===== Vong lap THU LAI theo buoc nhap (Hotfix 3.2.3, ban dieu chinh) =====
 // Moi buoc nhap thong tin dang nhap (email / mat khau Google, tai
 // khoan / mat khau TikTok) chay theo vong lap: phan loai lai man
@@ -1090,6 +1123,10 @@ async function gmailSigninSequence(deviceId, acct, hooks) {
             if (!seen) {
               cycleFailed = true;
             } else {
+              // Hotfix 3.2.4: tat ban phim truoc khi bam Tiep theo —
+              // ban phim con mo thi bounds nut bi bao lech, cham
+              // theo toa do do se truot (chan doan may that).
+              await dismissKeyboard(deviceId, log);
               const nb = await tapMarkerWithRetry(deviceId, cfg.nextButton, {
                 verifyMarkers: cfg.verifyMarkers, logTag: 'gmail-next-email'
               });
@@ -1169,6 +1206,9 @@ async function gmailSigninSequence(deviceId, acct, hooks) {
             if (!chk || !anyEditTextHasText(chk)) {
               cycleFailed = true; // nhap "rot" — o van trong, vong sau nhap lai
             } else {
+              // Hotfix 3.2.4: tat ban phim truoc khi bam Tiep theo
+              // (nhu buoc email — bounds nut bi lech khi ban phim mo).
+              await dismissKeyboard(deviceId, log);
               const nb = await tapMarkerWithRetry(deviceId, cfg.nextButton, {
                 verifyMarkers: cfg.verifyMarkers, logTag: 'gmail-next-password'
               });
@@ -1393,6 +1433,9 @@ async function tiktokLoginSequence(deviceId, acct, hooks) {
             if (!seen) {
               cycleFailed = true; // nhap "rot" — vong sau nhap lai
             } else {
+              // Hotfix 3.2.4: tat ban phim truoc khi bam nut dang
+              // nhap/tiep theo (nhu dang nhap Google).
+              await dismissKeyboard(deviceId, log);
               const lb = await tapMarkerWithRetry(deviceId, cfg.loginButton, {
                 verifyMarkers: cfg.verifyMarkers, logTag: 'tiktok-login-user-next'
               });
@@ -1471,6 +1514,10 @@ async function tiktokLoginSequence(deviceId, acct, hooks) {
             if (!chk || !anyEditTextHasText(chk)) {
               cycleFailed = true; // nhap "rot" — vong sau nhap lai
             } else {
+              // Hotfix 3.2.4: tat ban phim truoc khi bam nut dang
+              // nhap (nhu buoc tai khoan — bounds nut bi lech khi
+              // ban phim con mo).
+              await dismissKeyboard(deviceId, log);
               const lb = await tapMarkerWithRetry(deviceId, cfg.loginButton, {
                 verifyMarkers: cfg.verifyMarkers, logTag: 'tiktok-login-pass-next'
               });
