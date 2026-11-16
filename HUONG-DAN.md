@@ -1,3 +1,52 @@
+# Farm Control — Giai đoạn 3.4: Hướng dẫn
+
+> **BẢN 3.4 (2026-11-16)** — Thêm TOOL MỚI theo yêu cầu của
+> huynh: **trang phản chiếu & điều khiển dàn máy**. App Farm
+> Agent KHÔNG đổi (vẫn v3.1, không cần cài lại) — chỉ cập
+> nhật phía server như mọi lần.
+>
+> **Mở tool:** chạy server xong, vào
+> **http://localhost:8080/mirror** trên MacBook — hoặc bấm
+> link **"🖥 Màn hình dàn máy"** ở đầu trang điều khiển
+> chính.
+>
+> **Tab 📱 Dàn máy:** lưới màn hình TRỰC TIẾP của từng máy
+> (ảnh chụp làm mới liên tục, ~2,5 giây/máy — gần trực tiếp
+> chứ không phải video mượt như scrcpy). Bấm vào màn hình
+> một máy để mở **khung điều khiển**: bấm vào ảnh = chạm,
+> kéo trên ảnh = vuốt, có sẵn nút Back / Home / Recents /
+> Wake, ô gửi chữ và nút mở TikTok Lite. Tích chọn nhiều
+> máy trên lưới rồi bật công tắc **"Áp dụng đồng loạt"**
+> trong khung điều khiển — mọi thao tác sẽ gửi tới TẤT CẢ
+> máy đã chọn cùng lúc, tọa độ tự đổi theo độ phân giải
+> thật của từng máy. Dưới lưới có mục **"➕ Kết nối máy
+> mới"** (QR ghi danh + 2 cách thêm máy như bản 3.3).
+>
+> **Tab ▶ Tác vụ:** chạy trên các máy đã chọn ở tab Dàn
+> máy: **Điểm danh 14 ngày**, **Tự động xem video**,
+> **Check heo** (có ô dán link game chuyên dụng ngay trên
+> tab — chưa có link thì không chạy), **Đăng nhập TikTok
+> Lite** (từ kho heo) và **Mở TikTok Lite** đồng loạt.
+>
+> **⚠️ Điều kiện để thấy màn hình máy:** mỗi điện thoại
+> phải ĐÃ cấp **quyền chụp màn hình** cho Farm Agent (mở
+> app trên máy, bấm cấp quyền rồi chọn **"Bắt đầu ngay"**).
+> Máy chưa cấp quyền sẽ hiện ô hướng dẫn thay vì hình ảnh —
+> cấp quyền một lần là các lần sau tự hiện.
+>
+> **Cách cập nhật lên 3.4:** (1) Dừng server cũ (Ctrl+C
+> trong cửa sổ Terminal đang chạy server). (2) Giải nén gói
+> 3.4. (3) Chép **toàn bộ file trong thư mục `data/` của
+> server cũ** (bản đang dùng) đè sang thư mục `data/` của
+> server 3.4 — để giữ kho Gmail, kho heo, link game và tiến
+> độ điểm danh. (4) Vào thư mục `server` của bản 3.4 và
+> chạy `node server.js`. Không cần đụng gì tới điện thoại.
+>
+> **⚠️ QUAN TRỌNG: sau khi chép file `data/` xong và chạy
+> server mới, hãy mở tab "Kho dữ liệu" trên trang điều
+> khiển và KIỂM TRA kho Gmail / kho heo đã hiện đúng tài
+> khoản của huynh CHƯA, rồi mới chạy bất cứ tác vụ nào.**
+
 # Farm Control — Giai đoạn 3.3: Hướng dẫn
 
 > **BẢN 3.3 (2026-11-16)** — Thêm 3 tính năng ở tab

@@ -795,3 +795,112 @@ LƯU Ý: kiểm chứng bằng fake agent. Reset từ xa chỉ chạy được
 trên máy đã ghi danh Device Owner bằng QR (giới hạn của
 Android, đã ghi rõ trong HUONG-DAN); cần người dùng thử nút
 Reset + Xoá + Thêm máy trên dàn máy thật để xác nhận dứt điểm.
+
+
+## Giai đoạn 3.4 — Trang phản chiếu & điều khiển dàn máy (2026-11-16)
+
+Yêu cầu của người dùng (~23:43): một tool MỚI — phản chiếu màn
+hình NHIỀU điện thoại lên màn hình máy tính, bấm vào từng máy để
+thao tác hoặc chọn thao tác ĐỒNG LOẠT; giao diện gồm mục dàn
+máy + mục tác vụ; kết nối bằng QR; tác vụ chủ yếu cho TikTok
+Lite (điểm danh, xem video, check heo). Xây thành TRANG MỚI
+trên chính server hiện có (chỉ phía server; Farm Agent giữ
+nguyên v3.1 — agent đã có sẵn screenshot/tap/swipe/input_text/
+key/open_app từ các giai đoạn trước).
+
+**Thiết kế đã dựng:**
+
+- `GET /mirror` (file `server/mirror.html`, link "🖥 Màn hình
+  dàn máy" ở header trang điều khiển chính). Tên trang: "Phản
+  chiếu & Điều khiển dàn máy". Cùng tông tím rực, gọn, tiếng
+  Việt.
+- **Tab 📱 Dàn máy (mặc định):** lưới thẻ máy — mỗi thẻ hiện
+  màn hình TRỰC TIẾP của máy bằng cách quay vòng lệnh
+  `screenshot` sẵn có (gửi so le từng máy, ~2,5 giây/máy; máy
+  offline thì dừng quay; agent trả `no_permission` thì hiện ô
+  thay thế kèm hướng dẫn cấp quyền chụp màn hình "Bắt đầu
+  ngay"). Thẻ có nhãn/model, huy hiệu Online, pin, ô chọn máy
+  cho thao tác đồng loạt + nút "Chọn tất cả / Chọn máy Online
+  / Bỏ chọn". Dưới lưới là khối thu gọn "➕ Kết nối máy mới"
+  (nội dung Thêm máy của 3.3: QR `/api/provision/qr` + link
+  `/apks/agent.apk` + 2 danh sách bước A/B).
+- **Khung điều khiển riêng:** bấm vào màn hình một máy → mở
+  khung lớn: ảnh trực tiếp (quay ~1 giây), BẤM vào ảnh = chạm
+  tại tọa độ tương ứng (đổi theo độ phân giải THẬT của máy),
+  KÉO trên ảnh = vuốt giữa 2 điểm; nút Back / Home / Recents /
+  Wake; ô nhập chữ + nút "Gửi chữ" (input_text); nút "Mở
+  TikTok Lite". Công tắc **"Áp dụng đồng loạt cho N máy đã
+  chọn"**: bật lên thì mọi chạm/vuốt/phím/gửi chữ/mở app trong
+  khung này gửi THÊM tới mọi máy đã chọn — đổi sang tọa độ
+  tuyệt đối của từng máy bằng tọa độ TƯƠNG ĐỐI (mô hình điều
+  khiển nhóm của QtScrcpy/Escrcpy).
+- **`POST /api/broadcast`** `{deviceIds, action:
+  tap|swipe|key|input_text|open_app, rel:{x,y}|{x1,y1,x2,y2}
+  (0..1), key, text, package, durationMs}`: server đổi tọa độ
+  tương đối → tuyệt đối theo kích thước màn hình của TỪNG máy
+  rồi gửi SONG SONG, trả kết quả từng máy; máy lỗi/offline/không
+  tồn tại chỉ hỏng phần của nó. Độ phân giải máy lấy theo thứ
+  tự: hồ sơ máy (hello/status có width/height) → lệnh `status`
+  (data.width/height) → suy từ bounds lớn nhất trong dump_ui →
+  mặc định 1080x2400; học được thì nhớ lại vào hồ sơ máy
+  (`screenW/screenH`, có trong `/api/devices`). Điều khiển 1
+  máy cũng đi qua endpoint này với 1 id.
+- **Tab ▶ Tác vụ** (chạy trên các máy ĐÃ CHỌN, dùng chung lựa
+  chọn với tab Dàn máy): Điểm danh 14 ngày (pipeline
+  `diem-danh`), Tự động xem video (watch start/stop,
+  detect:false), Check heo (watch detect:true + link game lấy
+  từ `/api/game-link`, có ô link ngay trên tab, tự nạp + lưu;
+  link trống thì chặn và báo rõ), Đăng nhập TikTok Lite
+  (pipeline `dang-nhap-tiktok-lite`), Mở TikTok Lite
+  (broadcast open_app). Khu trạng thái chạy: lượt pipeline mới
+  nhất + trạng thái các vòng watch + nhật ký sự kiện (poll
+  `/api/pipeline/runs`, `/api/watch`, `/api/events` như trang
+  chính).
+
+**Tính trung thực về tốc độ khung hình:** đây KHÔNG phải
+truyền hình video (scrcpy). Màn hình được làm mới bằng ảnh
+chụp liên tiếp — ~2,5 giây/máy ở lưới (nhiều máy thì quay
+vòng), ~1 giây ở khung điều khiển riêng. Đủ để quan sát +
+thao tác điểm danh/xem video/check heo, không thay thế được
+phần mềm mirror USB khi cần xem chuyển động mượt.
+
+**Fake agent:** thêm env `FAKE_SCREEN=WxH` — khi đặt, fake
+báo width/height trong hello + status (cả tin nhắn lẫn kết
+quả lệnh status); không đặt thì KHÔNG báo (hành vi cũ nguyên
+vẹn). Kết quả lệnh `status` có thêm `lastTap`/`lastSwipe`
+(tọa độ tuyệt đối của lần chạm/vuốt gần nhất) để script kiểm
+chứng đối chiếu việc đổi tọa độ.
+
+**Kết quả verify-stage34.js: 34 PASS, 0 FAIL**, gồm:
+
+- GET /mirror 200 + đủ 2 tab/khung điều khiển/công tắc đồng
+  loạt/nút tác vụ/ô link game/khối kết nối máy mới; dashboard
+  chính có link sang /mirror.
+- 2 fake với FAKE_SCREEN khác nhau (A 1080x2400, B 720x1600)
+  online; server học đúng kích thước từng máy từ hello;
+  screenshot qua /api/cmd trả JPEG base64 hợp lệ.
+- Broadcast tap tương đối (0.5, 0.5): A nhận (540,1200), B
+  nhận (360,800) — khớp cả ở response lẫn `status.lastTap`
+  của fake; id không tồn tại → `device_not_found` riêng, 2
+  máy kia vẫn ok.
+- Broadcast swipe tương đối: A (540,1800)→(540,720), B
+  (360,1200)→(360,480) qua `lastSwipe`.
+- Broadcast key back / open_app TikTok Lite / input_text tới
+  cả 2 máy: ok, cmdLog của fake ghi đủ.
+- Action sai và thiếu deviceIds → HTTP 400. Tắt fake B:
+  broadcast tới B trả `device_offline`, máy A vẫn ok.
+
+**Chạy lại hồi quy: verify-stage2.js 38 PASS, 0 FAIL;
+verify-stage3.js 41 PASS, 0 FAIL; verify-stage31.js 29 PASS,
+0 FAIL; verify-stage32.js 54 PASS, 0 FAIL; verify-stage321.js
+18 PASS, 0 FAIL; verify-stage322.js 16 PASS, 0 FAIL;
+verify-stage323.js 25 PASS, 0 FAIL; verify-stage324.js 18
+PASS, 0 FAIL; verify-stage33.js 37 PASS, 0 FAIL** — đúng
+nguyên số đếm trước, không hồi quy.
+
+LƯU Ý: kiểm chứng bằng fake agent. Trên máy thật, mỗi điện
+thoại phải ĐÃ cấp quyền chụp màn hình ("Bắt đầu ngay" trong
+app Farm Agent) thì màn hình của nó mới hiện trên trang
+/mirror; máy chưa cấp quyền sẽ hiện ô hướng dẫn thay vì ảnh.
+Cần người dùng cập nhật server lên 3.4 và thử trang phản
+chiếu trên dàn máy thật để xác nhận dứt điểm.

@@ -61,6 +61,18 @@
 //                           that). Lenh van tra ok va van ghi cmdLog
 //                           binh thuong. Flow phai tu nhap LAI ca
 //                           buoc email (vong lap thu lai) moi xong.
+//   FAKE_SCREEN=WxH      -> (Giai doan 3.4) bao kich thuoc man hinh
+//                           WxH trong hello + status (tin nhan va ket
+//                           qua lenh 'status': data.width/height) —
+//                           phuc vu kiem chung trang phan chieu: server
+//                           doi toa do tuong doi cua thao tac dong
+//                           loat sang toa do tuyet doi theo man hinh
+//                           cua TUNG may. Khong dat env thi KHONG bao
+//                           (hanh vi nhu cu, cac test cu khong doi).
+//                           Lenh 'status' (ket qua) con bao them
+//                           lastTap/lastSwipe (toa do tuyet doi cua
+//                           lan cham/vuot gan nhat) de script kiem
+//                           chung doi chieu.
 //   FAKE_KEYBOARD_SHIFT=1 -> (Hotfix 3.2.4) mo phong dung chan doan
 //                           cua nguoi dung tren may that (Sony
 //                           SOV37, 2026-11-16 ~22:40): sau khi nhap,
@@ -111,6 +123,17 @@ const DELAY_NEXT = process.env.FAKE_DELAY_NEXT ? parseInt(process.env.FAKE_DELAY
 const SIGNIN_BOTH_MARKERS = process.env.FAKE_SIGNIN_BOTH_MARKERS === '1';
 const DROP_FIRST_INPUT = process.env.FAKE_DROP_FIRST_INPUT === '1';
 const KEYBOARD_SHIFT = process.env.FAKE_KEYBOARD_SHIFT === '1';
+// Kich thuoc man hinh bao trong hello/status (Giai doan 3.4) — chi
+// khi dat FAKE_SCREEN=WxH (vd 720x1600); mac dinh null = khong bao.
+let SCREEN_W = 0, SCREEN_H = 0;
+if (process.env.FAKE_SCREEN) {
+  const m = String(process.env.FAKE_SCREEN).match(/^(\d+)x(\d+)$/);
+  if (m) { SCREEN_W = parseInt(m[1], 10); SCREEN_H = parseInt(m[2], 10); }
+}
+// Toa do tuyet doi cua lan cham/vuot gan nhat (phuc vu kiem chung
+// 3.4 qua lenh status: data.lastTap / data.lastSwipe).
+let lastTap = null;
+let lastSwipe = null;
 // Ban phim IME dang mo (mo phong 3.2.4): mo sau input_text thanh
 // cong, dong khi nhan key 'back' hoac khi doi man hinh (open_app /
 // open_google_signin). Chi co tac dung khi KEYBOARD_SHIFT=1.
@@ -165,7 +188,9 @@ const sock = net.connect(PORT, HOST, () => {
     battery: battery,
     agentVersion: '3.0-fake',
     deviceOwner: IS_DEVICE_OWNER,
-    accessibility: HAS_ACCESSIBILITY
+    accessibility: HAS_ACCESSIBILITY,
+    width: SCREEN_W || undefined,
+    height: SCREEN_H || undefined
   });
   setInterval(() => {
     battery = Math.max(80, battery - 1);
@@ -198,7 +223,9 @@ function statusMsg() {
     network: 'wifi',
     screenOn: true,
     deviceOwner: IS_DEVICE_OWNER,
-    accessibility: HAS_ACCESSIBILITY
+    accessibility: HAS_ACCESSIBILITY,
+    width: SCREEN_W || undefined,
+    height: SCREEN_H || undefined
   };
 }
 
@@ -400,6 +427,8 @@ function handleCmd(msg) {
         battery: battery, charging: false, network: 'wifi', screenOn: true,
         label: 'Máy test ảo', model: 'Xperia XZ2 (fake)', android: '10',
         deviceOwner: IS_DEVICE_OWNER, accessibility: HAS_ACCESSIBILITY,
+        width: SCREEN_W || undefined, height: SCREEN_H || undefined,
+        lastTap: lastTap, lastSwipe: lastSwipe,
         signinState: signinState,
         ttLoginState: ttLoginState,
         ttCheckedIn: ttCheckedIn,
@@ -443,6 +472,7 @@ function handleCmd(msg) {
       // cham vao nut (Button) co chu thi ghi them "tap_text:<chu>" vao
       // cmdLog — helper 3.2.1 cua server cham nut bang lenh 'tap' nay.
       const px = args.x || 0, py = args.y || 0;
+      lastTap = { x: px, y: py };
       const hitN = currentNodes().find((n) => Array.isArray(n.bounds) &&
         px >= n.bounds[0] && px <= n.bounds[2] && py >= n.bounds[1] && py <= n.bounds[3]);
       if (hitN) {
@@ -456,7 +486,8 @@ function handleCmd(msg) {
     }
     case 'swipe':
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
-      result(msg.id, true, null, { swiped: { x1: args.x1 || 0, y1: args.y1 || 0, x2: args.x2 || 0, y2: args.y2 || 0 } });
+      lastSwipe = { x1: args.x1 || 0, y1: args.y1 || 0, x2: args.x2 || 0, y2: args.y2 || 0 };
+      result(msg.id, true, null, { swiped: lastSwipe });
       break;
     case 'input_text':
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }

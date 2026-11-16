@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm Control — Phản chiếu &amp; Điều khiển dàn máy (Giai đoạn 3.4)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: linear-gradient(160deg, #f5f3ff 0%, #fdf4ff 55%, #eff6ff 100%); color: #1e1b2e; font-size: 15.5px; }
+  header { background: linear-gradient(90deg, #6d28d9, #7c3aed 45%, #db2777); color: #fff; padding: 14px 18px; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; font-size: 14px; opacity: .94; }
+  header a { color: #fff; font-weight: 700; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #4ade80; margin-right: 6px; }
+  main { padding: 12px; max-width: 1180px; margin: 0 auto; }
+  .tabbar { position: sticky; top: 0; z-index: 40; display: flex; gap: 8px; flex-wrap: wrap; background: rgba(245,243,255,.96); padding: 8px 2px; margin-bottom: 12px; }
+  .tabbtn { flex: 1 1 auto; font-size: 16.5px; font-weight: 700; padding: 11px 10px; border: 2px solid #ddd6fe; border-radius: 12px; background: #fff; color: #4c1d95; cursor: pointer; }
+  .tabbtn.active { background: linear-gradient(90deg, #7c3aed, #db2777); color: #fff; border-color: transparent; box-shadow: 0 3px 10px rgba(124,58,237,.35); }
+  .panelpage { display: none; }
+  .panelpage.active { display: block; }
+  .panel { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(109,40,217,.12); }
+  .panel h2 { margin: 0 0 10px; font-size: 18px; color: #4c1d95; }
+  .panel h3 { margin: 14px 0 6px; font-size: 16px; color: #4c1d95; }
+  .stepsnum { margin: 4px 0 10px 22px; padding: 0; font-size: 14.5px; line-height: 1.65; }
+  pre.qr { background: #0b1220; color: #d1fae5; padding: 12px; border-radius: 8px; font-size: 12.5px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  button { font-size: 14px; padding: 8px 11px; border: 0; border-radius: 8px; background: #7c3aed; color: #fff; cursor: pointer; }
+  button:hover { background: #6d28d9; }
+  button:disabled { background: #cbd5e1; cursor: not-allowed; }
+  button.warn { background: #d97706; } button.warn:hover { background: #b45309; }
+  button.danger { background: #dc2626; } button.danger:hover { background: #b91c1c; }
+  button.ghost { background: #ede9fe; color: #4c1d95; } button.ghost:hover { background: #ddd6fe; }
+  button.pink { background: #db2777; } button.pink:hover { background: #be185d; }
+  button.blue { background: #2563eb; } button.blue:hover { background: #1d4ed8; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .selinfo { font-size: 15px; font-weight: 700; color: #4c1d95; }
+  .small { font-size: 13px; color: #5b5470; }
+  textarea, input[type=text], input[type=number] { font-size: 14px; padding: 8px; border: 1px solid #c4b5fd; border-radius: 8px; }
+  /* Luoi man hinh dan may */
+  #mirrorGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .mcard { background: #fff; border-radius: 12px; padding: 10px; box-shadow: 0 2px 8px rgba(109,40,217,.13); border-left: 5px solid #7c3aed; }
+  .mcard.off { opacity: .65; border-left-color: #9ca3af; }
+  .mcard h3 { margin: 0 0 6px; font-size: 15.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: #1e1b2e; }
+  .mcard h3 input[type=checkbox] { width: 19px; height: 19px; accent-color: #7c3aed; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; color: #fff; }
+  .on { background: #16a34a; } .offb { background: #9ca3af; }
+  .screen { position: relative; background: #111827; border-radius: 8px; aspect-ratio: 9 / 18.5; overflow: hidden; cursor: pointer; }
+  .screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .screen .hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 10px; color: #e5e7eb; font-size: 13px; line-height: 1.5; }
+  .mmeta { font-size: 13px; color: #5b5470; margin-top: 6px; line-height: 1.5; }
+  /* Khung dieu khien rieng mot may */
+  #ctlModal { position: fixed; inset: 0; background: rgba(17,10,35,.78); display: none; z-index: 60; overflow: auto; }
+  #ctlModal .box { background: #fff; border-radius: 14px; max-width: 480px; margin: 3vh auto; padding: 14px; }
+  #ctlModal h2 { margin: 0 0 8px; font-size: 18px; color: #4c1d95; }
+  #ctlScreen { position: relative; background: #111827; border-radius: 10px; aspect-ratio: 9 / 18.5; max-height: 62vh; margin: 0 auto; overflow: hidden; }
+  #ctlImg { width: 100%; height: 100%; object-fit: contain; display: block; touch-action: none; cursor: crosshair; }
+  #ctlHint { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 12px; color: #e5e7eb; font-size: 14px; line-height: 1.5; }
+  .taskGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .task { border: 2px solid #ede9fe; border-radius: 12px; padding: 13px; background: #fbfaff; }
+  .task h3 { margin: 0 0 6px; font-size: 16.5px; color: #4c1d95; }
+  .task p { margin: 0 0 9px; font-size: 14px; color: #5b5470; line-height: 1.5; }
+  .task input[type=text], .task input[type=number] { width: 100%; margin-bottom: 8px; }
+  #taskLog, #watchBox { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.6; max-height: 300px; overflow: auto; white-space: pre-wrap; }
+  .ok-t { color: #15803d; } .err-t { color: #b91c1c; }
+  details.conn { background: #fff; border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(109,40,217,.12); }
+  details.conn summary { font-size: 16.5px; font-weight: 700; color: #4c1d95; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🖥 Phản chiếu &amp; Điều khiển dàn máy (Giai đoạn 3.4)</h1>
+  <p><span class="dot" id="serverDot"></span><span id="serverInfo">Đang nối server...</span>
+  &nbsp;·&nbsp;<a href="/">← Trang điều khiển chính</a></p>
+</header>
+<main>
+  <div class="tabbar">
+    <button class="tabbtn active" data-tab="danmay">📱 Dàn máy</button>
+    <button class="tabbtn" data-tab="tacvu">▶ Tác vụ</button>
+  </div>
+
+  <!-- ============ TAB 1: DAN MAY — PHAN CHIEU MAN HINH ============ -->
+  <section class="panelpage active" id="panel-danmay">
+    <div class="row">
+      <button class="ghost" id="selAll">Chọn tất cả</button>
+      <button class="ghost" id="selOnline">Chọn máy Online</button>
+      <button class="ghost" id="selNone">Bỏ chọn</button>
+      <span class="selinfo" id="selInfo">Đang chọn: 0 máy</span>
+      <span class="small">Khung hình gần trực tiếp (làm mới ~2,5 giây/máy, không phải video). Bấm vào màn hình của một máy để mở khung điều khiển.</span>
+    </div>
+    <div id="mirrorEmpty" class="panel" style="display:none">Chưa có máy nào kết nối. Mở app <b>Farm Agent</b> trên điện thoại, nhập IP của MacBook này, cổng 8787, rồi bấm “Lưu &amp; Kết nối” — hoặc xem mục “➕ Kết nối máy mới” bên dưới.</div>
+    <div id="mirrorGrid"></div>
+
+    <details class="conn" id="connBlock">
+      <summary>➕ Kết nối máy mới</summary>
+      <div class="small" style="margin-top:8px">Hai cách thêm một máy vào dàn: <b>(A)</b> máy mới hoặc máy vừa reset nhà máy — ghi danh bằng QR để máy thành <b>Device Owner</b> (sau này reset từ xa được); <b>(B)</b> máy đang dùng sẵn — cài app Farm Agent trực tiếp bằng file APK.</div>
+      <h3 style="color:#4c1d95">A. Máy mới / máy vừa reset nhà máy — quét QR ghi danh</h3>
+      <ol class="stepsnum">
+        <li>Mở máy — ở màn hình chào đầu tiên, <b>chạm 6 lần vào cùng một chỗ</b> để mở chế độ quét mã QR.</li>
+        <li>Kết nối WiFi (cùng mạng với MacBook chạy server) rồi <b>quét mã QR ghi danh</b> (bấm “Tải nội dung QR”, chép JSON dán vào bất kỳ trang tạo mã QR nào để lấy mã).</li>
+        <li>Máy <b>tự cài Farm Agent + tự nhận quyền chủ máy (Device Owner)</b> — không cần thao tác thêm.</li>
+        <li>Mở app Farm Agent trên máy, nhập <b>IP của MacBook + cổng 8787 + nhãn máy</b> (ví dụ “01”), bấm “Lưu &amp; Kết nối”.</li>
+        <li>Bấm nút trong app để <b>bật Trợ năng</b> + <b>cấp quyền chụp màn hình</b> (“Bắt đầu ngay”) cho Farm Agent. Xong — máy hiện ở lưới phía trên.</li>
+      </ol>
+      <div class="row"><button id="qrLoad" class="ghost">Tải nội dung QR</button><button id="qrCopy" class="ghost" disabled>Chép JSON</button></div>
+      <pre class="qr" id="qrPre" style="display:none"></pre>
+      <h3 style="color:#4c1d95">B. Máy đang dùng sẵn — cài APK trực tiếp</h3>
+      <ol class="stepsnum">
+        <li>Tải app Farm Agent: <a href="/apks/agent.apk"><b>/apks/agent.apk</b></a> (mở link này ngay trên điện thoại, cùng WiFi với MacBook).</li>
+        <li>Cài file APK vừa tải (cho phép “cài từ nguồn không rõ” nếu máy hỏi).</li>
+        <li>Mở app, nhập <b>IP của MacBook + cổng 8787 + nhãn máy</b>, bấm “Lưu &amp; Kết nối”.</li>
+        <li><b>Bật Trợ năng</b> cho Farm Agent + <b>cấp quyền chụp màn hình</b> (“Bắt đầu ngay”) trong app. Xong — máy hiện ở lưới phía trên.</li>
+      </ol>
+      <div class="small">Lưu ý: cách B không có quyền Device Owner nên <b>không reset nhà máy từ xa được</b> — muốn reset từ xa phải ghi danh theo cách A.</div>
+    </details>
+  </section>
+
+  <!-- ============ TAB 2: TAC VU TIKTOK LITE ============ -->
+  <section class="panelpage" id="panel-tacvu">
+    <div class="row"><span class="selinfo" id="taskSelInfo">Tác vụ chạy trên: 0 máy đã chọn</span>
+    <span class="small">(chọn máy ở tab 📱 Dàn máy — tích vào ô chọn trên từng thẻ máy)</span></div>
+    <div class="taskGrid">
+      <div class="task">
+        <h3>🐷 Điểm danh 14 ngày</h3>
+        <p>Chạy flow điểm danh TikTok Lite cho các máy đã chọn. Máy nào Google/TikTok bắt xác minh sẽ dừng “Chờ chạm tay” — xử lý trên trang điều khiển chính.</p>
+        <button id="btnCheckin">▶ Điểm danh máy đã chọn</button>
+      </div>
+      <div class="task">
+        <h3>🎬 Tự động xem video</h3>
+        <p>Mở TikTok Lite và tự vuốt xem video trên các máy đã chọn (chỉ xem, không quét check-in).</p>
+        <div class="row" style="margin:0 0 8px"><span class="small">Số phút:</span><input type="number" id="watchMinutes" value="30" min="1" max="600" style="width:90px"></div>
+        <button id="btnWatchStart">▶ Bắt đầu xem video</button>
+        <button class="warn" id="btnWatchStop">⏸ Dừng xem video</button>
+      </div>
+      <div class="task">
+        <h3>🐖 Check heo</h3>
+        <p>Máy đã quét ăn game: mở link game chuyên dụng, xem video hằng ngày để Nik mời nhận thêm tiền thưởng. Báo thành công khi quét thấy dấu check-in.</p>
+        <input type="text" id="gameLinkInput" placeholder="Link game chuyên dụng (hoặc nội dung mã QR)">
+        <div class="row" style="margin:0 0 8px"><button class="ghost" id="btnGameLinkSave">Lưu link</button><span class="small">Số phút:</span><input type="number" id="heoMinutes" value="30" min="1" max="600" style="width:90px"></div>
+        <button class="pink" id="btnCheckHeo">▶ Check heo máy đã chọn</button>
+      </div>
+      <div class="task">
+        <h3>📱 Đăng nhập TikTok Lite</h3>
+        <p>Cấp tài khoản từ kho heo (tab Kho dữ liệu ở trang chính) rồi tự đăng nhập TikTok Lite cho các máy đã chọn.</p>
+        <button id="btnTtLogin">▶ Đăng nhập TikTok Lite</button>
+      </div>
+      <div class="task">
+        <h3>📲 Mở TikTok Lite</h3>
+        <p>Gửi lệnh mở app TikTok Lite tới tất cả máy đã chọn cùng lúc.</p>
+        <button class="blue" id="btnOpenTt">▶ Mở TikTok Lite</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>📋 Trạng thái chạy</h2>
+      <div id="runBox" class="small" style="margin-bottom:6px">Chưa có lượt chạy pipeline nào.</div>
+      <div id="watchBox" class="small">—</div>
+      <div id="taskLog"></div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ KHUNG DIEU KHIEN RIENG MOT MAY ============ -->
+<div id="ctlModal">
+  <div class="box">
+    <h2 id="ctlTitle">Điều khiển máy</h2>
+    <div id="ctlScreen">
+      <img id="ctlImg" alt="Màn hình điện thoại">
+      <div id="ctlHint"></div>
+    </div>
+    <div class="small" style="margin-top:6px">Bấm vào ảnh = chạm · Kéo trên ảnh = vuốt. Tọa độ tự đổi theo độ phân giải thật của từng máy.</div>
+    <div class="row">
+      <button class="ghost" data-key="back">⬅ Back</button>
+      <button class="ghost" data-key="home">🏠 Home</button>
+      <button class="ghost" data-key="recents">▦ Recents</button>
+      <button class="ghost" id="ctlWake">⏰ Wake</button>
+      <button class="blue" id="ctlOpenTt">📲 Mở TikTok Lite</button>
+    </div>
+    <div class="row">
+      <input type="text" id="ctlText" placeholder="Nhập chữ gửi vào máy..." style="flex:1">
+      <button id="ctlSendText">Gửi chữ</button>
+    </div>
+    <div class="row">
+      <label style="display:flex;gap:7px;align-items:center;font-weight:700;color:#4c1d95">
+        <input type="checkbox" id="ctlBroadcast" style="width:19px;height:19px;accent-color:#7c3aed">
+        <span id="ctlBroadcastLbl">Áp dụng đồng loạt cho 0 máy đã chọn</span>
+      </label>
+    </div>
+    <div class="row">
+      <span class="small" id="ctlResult"></span>
+      <span style="flex:1"></span>
+      <button class="danger" id="ctlClose">Đóng</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+var TIKTOK_PKG = 'com.zhiliaoapp.musically.go';
+var devicesById = {};       // id -> publicDevice
+var deviceOrder = [];       // ids theo thu tu label
+var selected = {};          // id -> true (may duoc chon cho dong loat + tac vu)
+var shotCache = {};         // id -> dataURL anh gan nhat
+var shotErr = {};           // id -> 'no_permission' | 'offline' | loi khac | null
+var ctlId = null;           // may dang mo khung dieu khien
+var ctlOpen = false;
+var lastEventId = 0;
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+function devName(d) { return d.label || d.model || d.id; }
+function postJson(url, body) {
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(function (r) { return r.json(); });
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function selectedIds() { return Object.keys(selected).filter(function (id) { return selected[id] && devicesById[id]; }); }
+function logLine(msg, isErr) {
+  var el = $('taskLog');
+  var div = document.createElement('div');
+  if (isErr) div.className = 'err-t';
+  div.textContent = '[' + new Date().toLocaleTimeString('vi-VN') + '] ' + msg;
+  el.appendChild(div);
+  while (el.children.length > 120) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ---------- Tab ---------- */
+var tabBtns = document.querySelectorAll('.tabbtn');
+tabBtns.forEach(function (b) {
+  b.onclick = function () {
+    tabBtns.forEach(function (x) { x.classList.remove('active'); });
+    b.classList.add('active');
+    document.querySelectorAll('.panelpage').forEach(function (p) { p.classList.remove('active'); });
+    $('panel-' + b.getAttribute('data-tab')).classList.add('active');
+    updateSelInfo();
+  };
+});
+
+/* ---------- Danh sach may + lua chon ---------- */
+function updateSelInfo() {
+  var n = selectedIds().length;
+  $('selInfo').textContent = 'Đang chọn: ' + n + ' máy';
+  $('taskSelInfo').textContent = 'Tác vụ chạy trên: ' + n + ' máy đã chọn';
+  $('ctlBroadcastLbl').textContent = 'Áp dụng đồng loạt cho ' + n + ' máy đã chọn';
+}
+function renderGrid() {
+  var grid = $('mirrorGrid');
+  $('mirrorEmpty').style.display = deviceOrder.length ? 'none' : 'block';
+  var html = '';
+  deviceOrder.forEach(function (id) {
+    var d = devicesById[id];
+    var err = shotErr[id];
+    var inner;
+    if (!d.online) inner = '<div class="hint">Máy đang offline</div>';
+    else if (err === 'no_permission') inner = '<div class="hint">Chưa cấp quyền chụp màn hình — mở Farm Agent trên máy, bấm cấp quyền rồi chọn “Bắt đầu ngay”</div>';
+    else if (shotCache[id]) inner = '<img id="shot-' + esc(id) + '" src="' + shotCache[id] + '" alt="">';
+    else inner = '<div class="hint">Đang tải khung hình…</div>';
+    html += '<div class="mcard' + (d.online ? '' : ' off') + '">' +
+      '<h3><input type="checkbox" data-sel="' + esc(id) + '"' + (selected[id] ? ' checked' : '') + '> ' +
+      '<span>' + esc(devName(d)) + '</span>' +
+      '<span class="badge ' + (d.online ? 'on' : 'offb') + '">' + (d.online ? 'Online' : 'Offline') + '</span></h3>' +
+      '<div class="screen" data-open="' + esc(id) + '">' + inner + '</div>' +
+      '<div class="mmeta">' + esc(d.model || '') + (d.android ? ' · Android ' + esc(d.android) : '') +
+      '<br>Pin: ' + (d.battery == null ? '—' : d.battery + '%') +
+      (d.screenW ? ' · Màn hình: ' + d.screenW + '×' + d.screenH : '') + '</div>' +
+      '<div class="row" style="margin-bottom:0"><button class="ghost" data-open="' + esc(id) + '">🎛 Điều khiển</button></div>' +
+      '</div>';
+  });
+  grid.innerHTML = html;
+  grid.querySelectorAll('input[data-sel]').forEach(function (cb) {
+    cb.onchange = function () { selected[cb.getAttribute('data-sel')] = cb.checked; updateSelInfo(); };
+  });
+  grid.querySelectorAll('[data-open]').forEach(function (el) {
+    el.onclick = function () { openCtl(el.getAttribute('data-open')); };
+  });
+  updateSelInfo();
+}
+function fetchDevices() {
+  fetch('/api/devices').then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok) return;
+    $('serverDot').style.background = '#4ade80';
+    $('serverInfo').textContent = 'Server online · ' + j.devices.length + ' máy';
+    devicesById = {}; deviceOrder = [];
+    j.devices.forEach(function (d) { devicesById[d.id] = d; deviceOrder.push(d.id); });
+    Object.keys(selected).forEach(function (id) { if (!devicesById[id]) delete selected[id]; });
+    renderGrid();
+  }).catch(function () { $('serverDot').style.background = '#f87171'; $('serverInfo').textContent = 'Mất nối server...'; });
+}
+
+/* ---------- Vong quay screenshot (so le tung may) ---------- */
+function takeShot(id, imgEl, hintEl) {
+  return postJson('/api/cmd', { deviceId: id, cmd: 'screenshot' }).then(function (j) {
+    if (j && j.ok && j.data && j.data.image) {
+      shotCache[id] = 'data:image/jpeg;base64,' + j.data.image;
+      shotErr[id] = null;
+      if (imgEl) { imgEl.src = shotCache[id]; imgEl.style.display = 'block'; }
+      if (hintEl) hintEl.style.display = 'none';
+      var g = $('shot-' + id);
+      if (g && (!ctlOpen || ctlId !== id)) g.src = shotCache[id];
+    } else {
+      var e = (j && j.error) || 'unknown';
+      shotErr[id] = e;
+      if (hintEl) {
+        hintEl.style.display = 'flex';
+        hintEl.textContent = e === 'no_permission'
+          ? 'Chưa cấp quyền chụp màn hình — mở Farm Agent trên máy, bấm cấp quyền rồi chọn “Bắt đầu ngay”'
+          : ('Không chụp được màn hình: ' + e);
+      }
+      if (!ctlOpen) renderGridSoon();
+    }
+  }).catch(function () { /* bo qua, vong sau thu lai */ });
+}
+var renderTimer = null;
+function renderGridSoon() {
+  if (renderTimer) return;
+  renderTimer = setTimeout(function () { renderTimer = null; renderGrid(); }, 600);
+}
+async function shotLoop() {
+  for (;;) {
+    var ids = deviceOrder.filter(function (id) { return devicesById[id] && devicesById[id].online && !(ctlOpen && ctlId === id); });
+    if (!ids.length) { await sleep(1200); continue; }
+    for (var i = 0; i < ids.length; i++) {
+      if (!devicesById[ids[i]] || !devicesById[ids[i]].online) continue;
+      await takeShot(ids[i], null, null);
+      await sleep(300);
+    }
+    await sleep(400);
+  }
+}
+
+/* ---------- Khung dieu khien rieng ---------- */
+function ctlTargets() {
+  var ids = [ctlId];
+  if ($('ctlBroadcast').checked) {
+    selectedIds().forEach(function (id) { if (id !== ctlId) ids.push(id); });
+  }
+  return ids;
+}
+function broadcast(body) {
+  body.deviceIds = ctlTargets();
+  return postJson('/api/broadcast', body).then(function (j) {
+    var okN = (j.results || []).filter(function (r) { return r.ok; }).length;
+    var tot = (j.results || []).length;
+    $('ctlResult').textContent = 'Đã gửi tới ' + tot + ' máy: ' + okN + ' ok' + (tot - okN > 0 ? ', ' + (tot - okN) + ' lỗi' : '') + '.';
+    return j;
+  }).catch(function () { $('ctlResult').textContent = 'Lỗi gửi lệnh (mất nối server?)'; });
+}
+function openCtl(id) {
+  var d = devicesById[id];
+  if (!d) return;
+  ctlId = id; ctlOpen = true;
+  $('ctlTitle').textContent = 'Điều khiển: ' + devName(d) + (d.model ? ' (' + d.model + ')' : '');
+  $('ctlResult').textContent = '';
+  $('ctlModal').style.display = 'block';
+  ctlShotLoop();
+}
+function closeCtl() { ctlOpen = false; ctlId = null; $('ctlModal').style.display = 'none'; }
+$('ctlClose').onclick = closeCtl;
+async function ctlShotLoop() {
+  while (ctlOpen && ctlId) {
+    await takeShot(ctlId, $('ctlImg'), $('ctlHint'));
+    await sleep(1000);
+  }
+}
+function relFromEvent(e) {
+  var r = $('ctlImg').getBoundingClientRect();
+  return {
+    x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+    y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+  };
+}
+var dragStart = null;
+$('ctlImg').addEventListener('pointerdown', function (e) {
+  dragStart = relFromEvent(e);
+  $('ctlImg').setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+$('ctlImg').addEventListener('pointerup', function (e) {
+  if (!dragStart) return;
+  var end = relFromEvent(e);
+  var dx = end.x - dragStart.x, dy = end.y - dragStart.y;
+  var dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 0.025) broadcast({ action: 'tap', rel: { x: end.x, y: end.y } });
+  else broadcast({ action: 'swipe', rel: { x1: dragStart.x, y1: dragStart.y, x2: end.x, y2: end.y }, durationMs: 300 });
+  dragStart = null;
+  e.preventDefault();
+});
+document.querySelectorAll('#ctlModal [data-key]').forEach(function (b) {
+  b.onclick = function () { broadcast({ action: 'key', key: b.getAttribute('data-key') }); };
+});
+$('ctlWake').onclick = function () {
+  var ids = ctlTargets();
+  Promise.all(ids.map(function (id) { return postJson('/api/cmd', { deviceId: id, cmd: 'wake' }); })).then(function () {
+    $('ctlResult').textContent = 'Đã gửi lệnh Wake tới ' + ids.length + ' máy.';
+  });
+};
+$('ctlOpenTt').onclick = function () { broadcast({ action: 'open_app', package: TIKTOK_PKG }); };
+$('ctlSendText').onclick = function () {
+  var t = $('ctlText').value;
+  if (!t) return;
+  broadcast({ action: 'input_text', text: t });
+};
+
+/* ---------- Chon may ---------- */
+$('selAll').onclick = function () { deviceOrder.forEach(function (id) { selected[id] = true; }); renderGrid(); };
+$('selOnline').onclick = function () { deviceOrder.forEach(function (id) { selected[id] = !!devicesById[id].online; }); renderGrid(); };
+$('selNone').onclick = function () { selected = {}; renderGrid(); };
+
+/* ---------- Tab Tac vu ---------- */
+function needSelection() {
+  var ids = selectedIds();
+  if (!ids.length) { logLine('Chưa chọn máy nào — sang tab 📱 Dàn máy tích chọn máy trước.', true); return null; }
+  return ids;
+}
+$('btnCheckin').onclick = function () {
+  var ids = needSelection(); if (!ids) return;
+  postJson('/api/pipeline/start', { pipelineId: 'diem-danh', deviceIds: ids }).then(function (j) {
+    if (j.ok) logLine('🐷 Đã bắt đầu Điểm danh 14 ngày cho ' + ids.length + ' máy (run ' + j.runId + ')');
+    else logLine('Điểm danh lỗi: ' + (j.error || 'unknown'), true);
+  });
+};
+$('btnTtLogin').onclick = function () {
+  var ids = needSelection(); if (!ids) return;
+  postJson('/api/pipeline/start', { pipelineId: 'dang-nhap-tiktok-lite', deviceIds: ids }).then(function (j) {
+    if (j.ok) logLine('📱 Đã bắt đầu Đăng nhập TikTok Lite cho ' + ids.length + ' máy (run ' + j.runId + ')');
+    else logLine('Đăng nhập TikTok Lite lỗi: ' + (j.error || 'unknown'), true);
+  });
+};
+$('btnOpenTt').onclick = function () {
+  var ids = needSelection(); if (!ids) return;
+  postJson('/api/broadcast', { deviceIds: ids, action: 'open_app', package: TIKTOK_PKG }).then(function (j) {
+    var okN = (j.results || []).filter(function (r) { return r.ok; }).length;
+    logLine('📲 Mở TikTok Lite: ' + okN + '/' + (j.results || []).length + ' máy ok');
+  });
+};
+$('btnWatchStart').onclick = function () {
+  var ids = needSelection(); if (!ids) return;
+  var mins = parseInt($('watchMinutes').value, 10) || 30;
+  postJson('/api/watch/start', { deviceIds: ids, minutes: mins, detect: false }).then(function (j) {
+    logLine('🎬 Bắt đầu xem video ' + mins + ' phút cho ' + ids.length + ' máy: ' +
+      (j.results || []).map(function (r) { return (devicesById[r.deviceId] ? devName(devicesById[r.deviceId]) : r.deviceId) + (r.ok ? ' ✔' : ' ✘ ' + (r.error || '')); }).join('; '));
+  });
+};
+$('btnWatchStop').onclick = function () {
+  var ids = needSelection(); if (!ids) return;
+  postJson('/api/watch/stop', { deviceIds: ids }).then(function () { logLine('⏸ Đã dừng xem video / check heo cho các máy đã chọn'); });
+};
+$('btnCheckHeo').onclick = function () {
+  var ids = needSelection(); if (!ids) return;
+  var link = $('gameLinkInput').value.trim();
+  if (!link) { logLine('🐖 Check heo BẮT BUỘC có link game chuyên dụng — dán link (hoặc nội dung mã QR) vào ô link trước.', true); return; }
+  postJson('/api/game-link', { url: link }).catch(function () {});
+  var mins = parseInt($('heoMinutes').value, 10) || 30;
+  postJson('/api/watch/start', { deviceIds: ids, minutes: mins, gameUrl: link, detect: true }).then(function (j) {
+    logLine('🐖 Bắt đầu Check heo ' + mins + ' phút cho ' + ids.length + ' máy qua link game: ' +
+      (j.results || []).map(function (r) { return (devicesById[r.deviceId] ? devName(devicesById[r.deviceId]) : r.deviceId) + (r.ok ? ' ✔' : ' ✘ ' + (r.error || '')); }).join('; '));
+  });
+};
+$('btnGameLinkSave').onclick = function () {
+  var link = $('gameLinkInput').value.trim();
+  postJson('/api/game-link', { url: link }).then(function (j) {
+    logLine(j.ok ? 'Đã lưu link game chuyên dụng.' : 'Lưu link lỗi', !j.ok);
+  });
+};
+function loadGameLink() {
+  fetch('/api/game-link').then(function (r) { return r.json(); }).then(function (j) {
+    if (j.ok && j.gameLink && j.gameLink.url) $('gameLinkInput').value = j.gameLink.url;
+  }).catch(function () {});
+}
+function pollTaskStatus() {
+  fetch('/api/watch').then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok) return;
+    var box = $('watchBox');
+    if (!j.watches.length) { box.textContent = 'Không có vòng xem video / check heo nào đang chạy. 🐷 Check-in thành công (tổng): ' + (j.checkinSuccess || 0); return; }
+    box.textContent = j.watches.map(function (w) {
+      return (w.label || w.deviceId) + ': ' + w.status + ' · vòng ' + (w.rounds || 0) +
+        (w.detect ? ' · check heo' : ' · xem video') + (w.note ? ' · ' + w.note : '');
+    }).join('\n') + '\n🐷 Check-in thành công (tổng): ' + (j.checkinSuccess || 0);
+  }).catch(function () {});
+  fetch('/api/pipeline/runs').then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok || !j.runs.length) return;
+    var run = j.runs[0];
+    $('runBox').textContent = 'Lượt chạy mới nhất: ' + (run.pipelineName || run.pipelineId || run.id) + ' — ' +
+      run.devices.map(function (dr) {
+        var d = devicesById[dr.deviceId];
+        return (d ? devName(d) : dr.deviceId) + ': ' + dr.status;
+      }).join('; ');
+  }).catch(function () {});
+  fetch('/api/events?since=' + lastEventId).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok) return;
+    j.events.forEach(function (e) {
+      lastEventId = Math.max(lastEventId, e.id);
+      if (e.type === 'checkin_success' || e.type === 'gmail_signin' || e.type === 'tiktok_login' || e.type === 'watch_stop') {
+        logLine((e.label || e.deviceId || '') + ' — ' + e.message, false);
+      }
+    });
+  }).catch(function () {});
+}
+
+/* ---------- QR ghi danh (khoi Ket noi may moi) ---------- */
+var qrText = '';
+$('qrLoad').onclick = function () {
+  fetch('/api/provision/qr').then(function (r) { return r.json(); }).then(function (j) {
+    var pre = $('qrPre');
+    pre.style.display = 'block';
+    if (j && !j.error) {
+      qrText = JSON.stringify(j, null, 2);
+      pre.textContent = qrText;
+      $('qrCopy').disabled = false;
+    } else {
+      pre.textContent = 'Lỗi: ' + ((j && j.error) || 'unknown');
+    }
+  }).catch(function () { $('qrPre').style.display = 'block'; $('qrPre').textContent = 'Lỗi tải QR'; });
+};
+$('qrCopy').onclick = function () {
+  if (navigator.clipboard && qrText) navigator.clipboard.writeText(qrText);
+};
+
+/* ---------- Khoi dong ---------- */
+fetchDevices();
+loadGameLink();
+setInterval(fetchDevices, 4000);
+setInterval(pollTaskStatus, 3000);
+shotLoop();
+</script>
+</body>
+</html>

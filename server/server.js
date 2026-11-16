@@ -106,6 +106,8 @@ function publicDevice(d) {
     agentVersion: d.agentVersion || '',
     deviceOwner: !!d.deviceOwner,
     accessibility: !!d.accessibility,
+    screenW: d.screenW || 0,
+    screenH: d.screenH || 0,
     gmailAssigned: (typeof pool !== 'undefined')
       ? ((pool.accounts.find((a) => a.status === 'assigned' && a.deviceId === d.id) || {}).email || null)
       : null,
@@ -129,6 +131,7 @@ function handleAgentMessage(dev, msg) {
     dev.agentVersion = msg.agentVersion || '';
     if (msg.deviceOwner !== undefined) dev.deviceOwner = !!msg.deviceOwner;
     if (msg.accessibility !== undefined) dev.accessibility = !!msg.accessibility;
+    if (msg.width && msg.height) { dev.screenW = msg.width; dev.screenH = msg.height; }
     dev.online = true;
     dev.lastSeen = Date.now();
     console.log('[hello] ' + dev.id + ' label=' + dev.label + ' model=' + dev.model + ' android=' + dev.android + ' deviceOwner=' + dev.deviceOwner + ' accessibility=' + dev.accessibility);
@@ -137,6 +140,7 @@ function handleAgentMessage(dev, msg) {
     if (msg.charging !== undefined) dev.charging = !!msg.charging;
     if (msg.network !== undefined) dev.network = msg.network;
     if (msg.screenOn !== undefined) dev.screenOn = !!msg.screenOn;
+    if (msg.width && msg.height) { dev.screenW = msg.width; dev.screenH = msg.height; }
     if (msg.deviceOwner !== undefined) dev.deviceOwner = !!msg.deviceOwner;
     if (msg.accessibility !== undefined) dev.accessibility = !!msg.accessibility;
     dev.online = true;
@@ -178,6 +182,7 @@ const tcpServer = net.createServer((socket) => {
             battery: null, charging: false, network: 'none', screenOn: false,
             online: false, lastSeen: null, agentVersion: '',
             deviceOwner: false, accessibility: false,
+            screenW: 0, screenH: 0,
             socket: null, pending: new Map()
           };
           devices.set(id, existing);
@@ -2500,12 +2505,118 @@ function provisioningPayload(req) {
   return payload;
 }
 
+// ================= Phan chieu man hinh + phat thao tac dong loat (Giai doan 3.4) =================
+// Trang /mirror hien man hinh tung may (quay vong lenh screenshot)
+// va cho thao tac tung may hoac DONG LOAT nhieu may (mo hinh dieu
+// khien nhom): moi thao tac tren trang deu di qua toa do TUONG DOI
+// (0..1), server doi sang toa do TUYET DOI theo kich thuoc man hinh
+// cua TUNG may roi gui song song.
+//
+// Kich thuoc man hinh cua may lay theo thu tu: (1) so da nho trong
+// ho so may (hello/status co bao width/height, hoac da hoc tuoc
+// truoc do); (2) hoi lenh 'status' — data.width/height neu agent
+// co bao; (3) suy tu dump_ui: bounds lon nhat cua cac node trong
+// cay accessibility (bounds la toa do man hinh that, node goc
+// thuong trai khap man hinh); (4) mac dinh 1080x2400 nhu cac flow
+// truoc van dung. Ket qua hoc duoc se nho lai trong ho so may.
+async function ensureScreenSize(deviceId) {
+  const dev = devices.get(deviceId);
+  if (dev && dev.screenW > 0 && dev.screenH > 0) {
+    return { width: dev.screenW, height: dev.screenH, source: 'cache' };
+  }
+  try {
+    const st = await sendCommand(deviceId, 'status', {}, 8000);
+    if (st && st.ok && st.data && st.data.width && st.data.height) {
+      if (dev) { dev.screenW = st.data.width; dev.screenH = st.data.height; }
+      return { width: st.data.width, height: st.data.height, source: 'status' };
+    }
+  } catch (e) { /* thu cach khac */ }
+  try {
+    const du = await sendCommand(deviceId, 'dump_ui', {}, 10000);
+    const nodes = (du && du.ok && du.data && Array.isArray(du.data.nodes)) ? du.data.nodes : [];
+    let mw = 0, mh = 0;
+    for (const n of nodes) {
+      if (Array.isArray(n.bounds) && n.bounds.length === 4) {
+        if (n.bounds[2] > mw) mw = n.bounds[2];
+        if (n.bounds[3] > mh) mh = n.bounds[3];
+      }
+    }
+    if (mw >= 320 && mh >= 320) {
+      if (dev) { dev.screenW = mw; dev.screenH = mh; }
+      return { width: mw, height: mh, source: 'dump_ui' };
+    }
+  } catch (e) { /* dung mac dinh */ }
+  return { width: 1080, height: 2400, source: 'default' };
+}
+
+function clamp01(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return 0;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * Gui MOT thao tac (theo toa do tuong doi) toi mot may, doi sang
+ * toa do tuyet doi cua may do. Tra { deviceId, ok, error? , x?, y? }.
+ * Loi cua tung may (khong thay may, offline, agent bao loi) chi
+ * nam trong ket qua cua may do — khong lam hong cac may khac.
+ */
+async function broadcastOne(deviceId, j) {
+  const dev = devices.get(deviceId);
+  if (!dev) return { deviceId: deviceId, ok: false, error: 'device_not_found' };
+  try {
+    let result;
+    if (j.action === 'tap') {
+      const sz = await ensureScreenSize(deviceId);
+      const x = Math.round(clamp01(j.rel && j.rel.x) * sz.width);
+      const y = Math.round(clamp01(j.rel && j.rel.y) * sz.height);
+      result = await sendCommand(deviceId, 'tap', { x: x, y: y }, 15000);
+      if (result && result.ok) return { deviceId: deviceId, ok: true, x: x, y: y };
+      return { deviceId: deviceId, ok: false, error: (result && result.error) || 'unknown', x: x, y: y };
+    }
+    if (j.action === 'swipe') {
+      const sz = await ensureScreenSize(deviceId);
+      const rel = j.rel || {};
+      const args = {
+        x1: Math.round(clamp01(rel.x1) * sz.width),
+        y1: Math.round(clamp01(rel.y1) * sz.height),
+        x2: Math.round(clamp01(rel.x2) * sz.width),
+        y2: Math.round(clamp01(rel.y2) * sz.height),
+        durationMs: (typeof j.durationMs === 'number' && j.durationMs > 0) ? Math.min(j.durationMs, 5000) : 300
+      };
+      result = await sendCommand(deviceId, 'swipe', args, 15000);
+      if (result && result.ok) return Object.assign({ deviceId: deviceId, ok: true }, args);
+      return { deviceId: deviceId, ok: false, error: (result && result.error) || 'unknown' };
+    }
+    if (j.action === 'key') {
+      result = await sendCommand(deviceId, 'key', { key: String(j.key || '') }, 15000);
+    } else if (j.action === 'input_text') {
+      result = await sendCommand(deviceId, 'input_text', { text: String(j.text || '') }, 15000);
+    } else if (j.action === 'open_app') {
+      result = await sendCommand(deviceId, 'open_app', { 'package': String(j.package || '') }, 15000);
+    } else {
+      return { deviceId: deviceId, ok: false, error: 'bad_action' };
+    }
+    if (result && result.ok) return { deviceId: deviceId, ok: true };
+    return { deviceId: deviceId, ok: false, error: (result && result.error) || 'unknown' };
+  } catch (e) {
+    return { deviceId: deviceId, ok: false, error: e.message || 'send_failed' };
+  }
+}
+
 // ================= HTTP server =================
 const httpServer = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url, 'http://localhost');
     if (req.method === 'GET' && u.pathname === '/') {
       const html = fs.readFileSync(path.join(__dirname, 'dashboard.html'), 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+    // Trang phan chieu & dieu khien dan may (Giai doan 3.4)
+    if (req.method === 'GET' && u.pathname === '/mirror') {
+      const html = fs.readFileSync(path.join(__dirname, 'mirror.html'), 'utf8');
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
       return;
@@ -2540,6 +2651,28 @@ const httpServer = http.createServer(async (req, res) => {
         const code = (e.message === 'device_not_found') ? 404 : 503;
         jsonRes(res, code, { ok: false, error: e.message });
       }
+      return;
+    }
+
+    // ---- Phat thao tac dong loat (Giai doan 3.4) ----
+    // { deviceIds:[...], action:'tap'|'swipe'|'key'|'input_text'|'open_app',
+    //   rel:{x,y} hoac {x1,y1,x2,y2} (0..1), key, text, package, durationMs }
+    // Server doi toa do tuong doi -> tuyet doi theo man hinh tung may,
+    // gui SONG SONG, tra ket qua tung may (may loi khong keo cac may khac).
+    if (req.method === 'POST' && u.pathname === '/api/broadcast') {
+      let j;
+      try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
+      if (!Array.isArray(j.deviceIds) || j.deviceIds.length === 0) {
+        jsonRes(res, 400, { ok: false, error: 'no_devices' });
+        return;
+      }
+      if (['tap', 'swipe', 'key', 'input_text', 'open_app'].indexOf(j.action) < 0) {
+        jsonRes(res, 400, { ok: false, error: 'bad_action' });
+        return;
+      }
+      const ids = Array.from(new Set(j.deviceIds.map(String)));
+      const results = await Promise.all(ids.map((id) => broadcastOne(id, j)));
+      jsonRes(res, 200, { ok: results.some((r) => r.ok), results: results });
       return;
     }
 
