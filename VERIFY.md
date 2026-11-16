@@ -253,3 +253,132 @@ phỏng theo màn hình đăng nhập Google tiếng Nhật — phải hiệu ch
 lần chạy thật đầu tiên bằng dump_ui (xem HUONG-DAN.md của gói 3.1).
 CAPTCHA / xác minh SĐT / 2 bước của Google vẫn là bước chạm tay (flow
 dừng ở waiting_manual chờ Resume) — đúng giới hạn đã thống nhất.
+
+---
+
+## Giai đoạn 3.2 — Kho heo + đăng nhập TikTok Lite + điểm danh 14 ngày + dashboard 4 tab (kiểm chứng nội bộ, 2026-11-16)
+
+Yêu cầu của người dùng: viết lại trang điều khiển theo mẫu đã duyệt
+(4 tab: Dàn máy / Kho dữ liệu / Tác vụ / Hành động, tông tím) và code
+đầy đủ công dụng + liên kết các phần. Hai làm rõ thêm về "Check heo":
+(1) Check heo là việc hằng ngày của máy ĐÃ quét ăn game — check xem
+video để Nik mời nhận thêm tiền thưởng (không phải quét game nói
+chung); (2) Nik xem PHẢI vào bằng link game chuyên dụng / mã QR riêng
+thì bên Link mới được ghi nhận thành công — link này bắt buộc khi chạy
+Check heo và được lưu trên server (data/game-link.json) để khỏi dán
+lại mỗi ngày.
+
+Agent: **KHÔNG đổi** — vẫn Farm Agent v3.1 (cùng APK, cùng chữ ký;
+mọi tính năng 3.2 đều chạy bằng các lệnh agent sẵn có).
+
+Mới trong server v3.2:
+- **Kho tài khoản xem heo chưa đăng nhập** (`data/heo-pool.json`, tự
+  tạo rỗng): API mirror kho Gmail — `POST /api/heo/import` (dòng
+  `username|mật khẩu` hoặc `username:mật khẩu`, dedupe theo username,
+  bỏ dòng hỏng + báo số lượng), `GET /api/heo` (mật khẩu LUÔN che),
+  `POST /api/heo/assign-next {deviceId}`, `POST /api/heo/mark-die`,
+  `POST /api/heo/delete`. Entry có thêm `loggedInAt`.
+- **Flow `dang-nhap-tiktok-lite`**: cấp tài khoản heo (reuse nếu máy
+  đã được cấp; kho rỗng → lỗi rõ ràng `pool_empty`) → `open_app`
+  TikTok Lite → điều hướng màn hình đăng nhập theo mục **`tiktokLogin`**
+  mới trong flow-config (loginEntry / usernameScreen / passwordScreen /
+  loginButton / verifyMarkers, mặc định tiếng Nhật trước) → nhập
+  username → nhập mật khẩu → bấm đăng nhập → kiểm tra cuối: thấy chữ
+  xác minh thì park `waiting_manual` với ghi chú nguyên văn "Máy đang
+  ở bước xác minh của TikTok — xử lý chạm tay trên máy rồi bấm Chạy
+  tiếp"; xong thì ghi `loggedInAt`. Engine `tiktokLoginSequence()`
+  viết theo đúng mẫu `gmailSigninSequence()` (poll dump_ui ~1,5s,
+  timeout ~25s, sự kiện `tiktok_login` từng tiểu bước, mật khẩu luôn
+  `********`).
+- **Flow `diem-danh` (điểm danh 14 ngày)**: trạng thái per-device trong
+  `data/checkin-state.json` (`{dates[], cycleStart}`, ngày theo
+  Asia/Tokyo). Mở TikTok Lite → vào mục điểm danh theo mục **`checkin`**
+  mới trong flow-config (entryMarkers / buttonMarkers /
+  successMarkers) → thấy chữ thành công thì ghi ngày hôm nay; hôm nay
+  đã ghi rồi thì xong ngay với ghi chú "Hôm nay đã điểm danh rồi".
+  API `GET /api/checkin` (count/dates/todayDone/complete) +
+  `POST /api/checkin/reset {deviceId}`.
+- **Check heo**: thẻ ở tab Hành động ghi đúng nghĩa "Máy đã quét ăn
+  game — check xem video hằng ngày để Nik mời nhận thêm tiền thưởng";
+  ô **"Link game chuyên dụng (hoặc nội dung mã QR)" là BẮT BUỘC** —
+  trống thì dashboard chặn chạy và báo rõ phải dán link trước. Chạy =
+  mở link bằng `open_url` → vòng xem tự vuốt video + quét dump_ui tìm
+  chữ thành công → ghi sự kiện `checkin_success`, đánh dấu máy, dừng.
+  Link lưu server-side: `GET/POST /api/game-link` +
+  `data/game-link.json`; dashboard tự tải và điền sẵn (cả ô Check heo,
+  Xem video và Pipeline), tự lưu khi chạy/đổi link.
+- **"Tự động xem video" tách hẳn khỏi Check heo**: watch manager thêm
+  cờ `detect` (mặc định true — mọi caller cũ giữ nguyên hành vi);
+  xem video thường chạy `detect:false` — chỉ vuốt xem hết giờ, KHÔNG
+  quét chữ thành công, không báo check-in.
+- **Dashboard viết lại** (theo mẫu demo đã duyệt): 1 trang, header +
+  5 ô đếm (Tổng máy / Online / Gmail sẵn sàng / TK heo sẵn sàng /
+  Check-in thành công), thanh tab sticky 4 tab đúng thứ tự **📱 Dàn
+  máy (mặc định) · 🗄 Kho dữ liệu · ⚙ Tác vụ · ▶ Hành động**, chỉ hiện
+  panel của tab đang chọn; tông tím phong phú (violet chủ đạo + hồng
+  sakura + xanh dương + hổ phách theo mục), chữ to, gọn. Thẻ máy có
+  checkbox chọn máy (dùng chung cho Tác vụ/Hành động), badge Gmail đã
+  cấp / TK heo đã cấp / điểm danh n/14 / trạng thái xem, nút Status /
+  Wake / Screenshot / ✉️ Cấp Gmail; panel QR nằm trong tab Dàn máy.
+  Tab Kho dữ liệu: kho Gmail + kho heo cạnh nhau. Tab Tác vụ: 4 thẻ
+  (Đăng nhập Google, Tải LINE, Tải TikTok Lite, Đăng nhập TikTok Lite
+  bằng TK trong kho) + khối Pipeline đầy đủ + nhật ký sự kiện. Tab
+  Hành động: Điểm danh 14 ngày (nút chạy + tiến độ từng máy + nút bắt
+  đầu chu kỳ mới), Tự động xem video, Check heo + ô đếm check-in +
+  nhật ký check-in/xem video. Mọi API cũ giữ nguyên.
+- `/api/devices` thêm `gmailAssigned`, `heoAssigned`, `checkin`
+  (count/dates/todayDone/complete) cho từng máy.
+- flow-config.json thêm 2 mục `tiktokLogin` + `checkin` (đọc lại trực
+  tiếp mỗi lần chạy, file cũ thiếu mục thì dùng mặc định — tương thích
+  ngược).
+
+Fake agent v3.2: thêm máy trạng thái đăng nhập TikTok Lite (feed có
+nút ログイン → màn hình username → password → về feed; env
+`FAKE_TT_VERIFY=1` → màn hình verify 本人確認/確認コード) và màn hình
+điểm danh trên feed (nút チェックインする → dump sau đó có
+チェックイン完了); input_text ở màn hình username TikTok ghi
+`input_text(ttuser):<username>`, ở màn hình mật khẩu ghi che. Bộ đếm
+`FAKE_CHECKIN_AFTER` giữ nguyên hành vi (chỉ đếm dump ở màn hình
+TikTok feed; dump ở các màn hình đăng nhập Google/TikTok không đếm).
+
+Chạy `node verify-stage32.js` (server tạm TCP 21787 / HTTP 21080,
+vòng xem rút ngắn bằng `FARM_WATCH_MIN_SEC=1` / `FARM_WATCH_MAX_SEC=2`):
+
+**verify-stage32.js: 54 PASS, 0 FAIL** — gồm:
+- (a) Kho heo: import 4 dòng (2 hợp lệ + 1 trùng + 1 hỏng) →
+  added=2, skipped=1; list luôn che mật khẩu, không lộ pass thật;
+  assign-next cấp đúng tài khoản đầu kho, thẻ máy hiện TK đã cấp;
+  mark-die + delete chạy đúng.
+- (f) `/api/game-link`: ban đầu rỗng → lưu → đọc lại đúng; file
+  `game-link.json` có trên đĩa.
+- (b) Flow `dang-nhap-tiktok-lite` chạy đến `done`; fake agent nhận
+  đúng thứ tự lệnh: `open_app → tap_text:ログイン →
+  input_text(ttuser):nikheo_a1 → tap_text:次へ →
+  input_text(password):******** → tap_text:ログイン`; tài khoản được
+  ghi `loggedInAt`; sự kiện `tiktok_login` ghi đủ tiến trình.
+- (d) `FAKE_TT_VERIFY=1`: flow dừng `waiting_manual` với ghi chú xác
+  minh TikTok nguyên văn; Stop → run dừng hẳn.
+- (e) Điểm danh: ghi ngày 1/14, `/api/checkin` count=1 /
+  todayDone=true / complete=false, `checkin-state.json` lưu đúng
+  ngày Tokyo; chạy lại cùng ngày → "Hôm nay đã điểm danh rồi", count
+  vẫn 1; reset → count=0.
+- (f) Check heo qua link chuyên dụng (watch + detect): phát hiện
+  チェックイン完了 → `da_checkin`, bộ đếm check-in tăng, có sự kiện
+  `checkin_success`; xem video thường (`detect:false`) vẫn `watching`
+  sau 3,5 giây dù màn hình có sẵn chữ thành công — không báo nhầm.
+- (g) Dashboard: HTTP 200, 4 tab đúng thứ tự với Dàn máy là tab mặc
+  định active; có kho heo, flow đăng nhập TikTok và ô link game
+  chuyên dụng với đúng câu chữ của người dùng.
+- (c) Quét toàn bộ thân mọi response API trong phiên + `/api/events`:
+  cả 3 mật khẩu heo thử nghiệm KHÔNG xuất hiện ở đâu.
+
+**verify-stage2.js chạy lại: 38 PASS, 0 FAIL; verify-stage3.js chạy
+lại: 41 PASS, 0 FAIL; verify-stage31.js chạy lại: 29 PASS, 0 FAIL**
+— không hồi quy.
+
+LƯU Ý: toàn bộ kiểm chứng trên là với fake agent. Các marker trong
+mục `tiktokLogin` và `checkin` của flow-config.json là mặc định phỏng
+theo giao diện TikTok Lite tiếng Nhật — phải hiệu chuẩn sau lần chạy
+thật đầu tiên bằng dump_ui (xem HUONG-DAN.md của gói 3.2). Xác minh
+của TikTok (mã xác nhận / CAPTCHA) vẫn là bước chạm tay (flow dừng ở
+waiting_manual chờ Resume) — đúng giới hạn đã thống nhất.

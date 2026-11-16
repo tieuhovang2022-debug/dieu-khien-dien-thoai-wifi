@@ -3,144 +3,280 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Farm Control — Điều khiển dàn máy (Giai đoạn 3.1)</title>
+<title>Farm Control — Điều khiển dàn máy (Giai đoạn 3.2)</title>
 <style>
-  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #0f766e; color: #123; }
-  header { background: #115e59; color: #fff; padding: 14px 18px; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: linear-gradient(160deg, #f5f3ff 0%, #fdf4ff 55%, #eff6ff 100%); color: #1e1b2e; font-size: 15.5px; }
+  header { background: linear-gradient(90deg, #6d28d9, #7c3aed 45%, #db2777); color: #fff; padding: 14px 18px; }
   header h1 { margin: 0; font-size: 22px; }
-  header p { margin: 4px 0 0; font-size: 14px; opacity: .92; }
+  header p { margin: 4px 0 0; font-size: 14px; opacity: .94; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #4ade80; margin-right: 6px; }
-  main { padding: 14px; max-width: 1180px; margin: 0 auto; }
-  .counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
-  .counter { background: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
-  .counter .num { font-size: 28px; font-weight: 800; }
-  .counter .lbl { font-size: 13.5px; color: #456; }
-  .panel { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
-  .panel h2 { margin: 0 0 10px; font-size: 18px; }
-  #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 14px; }
-  .card { background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
-  .card.off { opacity: .65; }
-  .card h2 { margin: 0 0 6px; font-size: 19px; }
-  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: #fff; margin-right: 4px; }
+  main { padding: 12px; max-width: 1180px; margin: 0 auto; }
+  .counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .counter { background: #fff; border-radius: 12px; padding: 11px 14px; box-shadow: 0 2px 8px rgba(109,40,217,.14); border-top: 4px solid #7c3aed; }
+  .counter.pink { border-top-color: #ec4899; } .counter.blue { border-top-color: #2563eb; }
+  .counter.amber { border-top-color: #d97706; } .counter.green { border-top-color: #16a34a; }
+  .counter .num { font-size: 28px; font-weight: 800; color: #4c1d95; }
+  .counter .lbl { font-size: 13.5px; color: #5b5470; }
+  /* Thanh tab dinh o tren */
+  .tabbar { position: sticky; top: 0; z-index: 40; display: flex; gap: 8px; flex-wrap: wrap; background: rgba(245,243,255,.96); padding: 8px 2px; margin-bottom: 12px; }
+  .tabbtn { flex: 1 1 auto; font-size: 16.5px; font-weight: 700; padding: 11px 10px; border: 2px solid #ddd6fe; border-radius: 12px; background: #fff; color: #4c1d95; cursor: pointer; }
+  .tabbtn.active { background: linear-gradient(90deg, #7c3aed, #db2777); color: #fff; border-color: transparent; box-shadow: 0 3px 10px rgba(124,58,237,.35); }
+  .panel { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(109,40,217,.12); }
+  .panel h2 { margin: 0 0 10px; font-size: 18px; color: #4c1d95; }
+  .panelpage { display: none; }
+  .panelpage.active { display: block; }
+  #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(305px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 13px; box-shadow: 0 2px 8px rgba(109,40,217,.13); border-left: 5px solid #7c3aed; }
+  .card.off { opacity: .62; border-left-color: #9ca3af; }
+  .card h2 { margin: 0 0 6px; font-size: 18.5px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .card h2 input[type=checkbox] { width: 20px; height: 20px; accent-color: #7c3aed; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: #fff; margin: 2px 4px 2px 0; }
   .on { background: #16a34a; } .offb { background: #9ca3af; }
   .b-do { background: #2563eb; } .b-a11y { background: #7c3aed; } .b-no { background: #d1d5db; color: #374151; }
-  .meta { font-size: 14.5px; line-height: 1.55; color: #234; }
+  .b-gmail { background: #db2777; } .b-heo { background: #d97706; } .b-ck { background: #0ea5e9; }
+  .b-watch { background: #db2777; } .b-checkin { background: #16a34a; }
+  .meta { font-size: 14.5px; line-height: 1.55; color: #37314d; }
   .btns { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-  button { font-size: 14px; padding: 8px 11px; border: 0; border-radius: 8px; background: #0d9488; color: #fff; cursor: pointer; }
-  button:hover { background: #0f766e; }
+  button { font-size: 14px; padding: 8px 11px; border: 0; border-radius: 8px; background: #7c3aed; color: #fff; cursor: pointer; }
+  button:hover { background: #6d28d9; }
   button:disabled { background: #cbd5e1; cursor: not-allowed; }
   button.warn { background: #d97706; } button.warn:hover { background: #b45309; }
   button.danger { background: #dc2626; } button.danger:hover { background: #b91c1c; }
-  button.ghost { background: #e5e7eb; color: #123; } button.ghost:hover { background: #d1d5db; }
+  button.ghost { background: #ede9fe; color: #4c1d95; } button.ghost:hover { background: #ddd6fe; }
+  button.pink { background: #db2777; } button.pink:hover { background: #be185d; }
+  button.blue { background: #2563eb; } button.blue:hover { background: #1d4ed8; }
   .shot { margin-top: 10px; }
   .shot img { max-width: 100%; border-radius: 8px; border: 1px solid #ddd; }
-  #log { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.6; max-height: 320px; overflow: auto; white-space: pre-wrap; }
+  #log, #logHd { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.6; max-height: 320px; overflow: auto; white-space: pre-wrap; }
   .ok-t { color: #15803d; } .err-t { color: #b91c1c; } .wait-t { color: #b45309; font-weight: 700; }
   .checkin-t { background: #dcfce7; color: #14532d; font-weight: 800; padding: 3px 8px; border-radius: 6px; border: 1px solid #22c55e; }
-  .b-watch { background: #db2777; } .b-checkin { background: #16a34a; }
   table { border-collapse: collapse; width: 100%; font-size: 14px; }
-  th, td { border-bottom: 1px solid #e5e7eb; padding: 7px 8px; text-align: left; vertical-align: top; }
-  th { background: #f0fdfa; }
-  textarea, input[type=text], select { font-size: 14px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 8px; }
-  textarea { width: 100%; box-sizing: border-box; min-height: 84px; }
+  th, td { border-bottom: 1px solid #ede9fe; padding: 7px 8px; text-align: left; vertical-align: top; }
+  th { background: #f5f3ff; }
+  textarea, input[type=text], select { font-size: 14px; padding: 8px; border: 1px solid #c4b5fd; border-radius: 8px; }
+  textarea { width: 100%; min-height: 76px; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
-  .devchecks { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; font-size: 14.5px; }
-  .runbox { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+  .khoGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 860px) { .khoGrid { grid-template-columns: 1fr; } }
+  .taskGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .task { border: 2px solid #ede9fe; border-radius: 12px; padding: 13px; background: #fbfaff; }
+  .task h3 { margin: 0 0 6px; font-size: 16.5px; color: #4c1d95; }
+  .task p { margin: 0 0 9px; font-size: 14px; color: #5b5470; line-height: 1.5; }
+  .task input[type=text] { width: 100%; margin-bottom: 8px; }
+  .runbox { border: 1px solid #ede9fe; border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
   .runbox h3 { margin: 0 0 6px; font-size: 15.5px; }
   .devrun { border-top: 1px dashed #e5e7eb; padding: 8px 0; }
   .devrun .st { font-weight: 700; }
   .steps { margin: 6px 0 0 18px; padding: 0; font-size: 14px; line-height: 1.65; }
   .steps li.done { color: #15803d; }
   .steps li.error { color: #b91c1c; }
-  .steps li.running { color: #0f766e; font-weight: 700; }
+  .steps li.running { color: #7c3aed; font-weight: 700; }
   .steps li.waiting_manual { color: #b45309; font-weight: 800; background: #fffbeb; }
   .steps li.skipped { color: #6b7280; }
-  .st-running { color: #0f766e; } .st-done { color: #15803d; } .st-error { color: #b91c1c; }
+  .st-running { color: #7c3aed; } .st-done { color: #15803d; } .st-error { color: #b91c1c; }
   .st-waiting_manual { color: #b45309; } .st-stopped { color: #6b7280; }
+  .prog { background: #ede9fe; border-radius: 999px; height: 12px; overflow: hidden; min-width: 110px; }
+  .prog > div { background: linear-gradient(90deg, #7c3aed, #ec4899); height: 100%; }
+  .ckrow { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; padding: 8px 0; border-bottom: 1px dashed #ede9fe; font-size: 14.5px; }
   #modal { position: fixed; inset: 0; background: rgba(0,0,0,.72); display: none; z-index: 50; }
   #modal .box { background: #fff; border-radius: 12px; max-width: 520px; margin: 4vh auto; padding: 16px; max-height: 92vh; overflow: auto; }
   #modal img { max-width: 100%; border-radius: 8px; border: 1px solid #ddd; }
   pre.qr { background: #0b1220; color: #d1fae5; padding: 12px; border-radius: 8px; font-size: 12.5px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
   #empty { background: #fff; border-radius: 12px; padding: 18px; font-size: 16px; margin-bottom: 14px; }
-  .small { font-size: 13px; color: #456; }
+  .small { font-size: 13px; color: #5b5470; }
+  .selinfo { font-size: 15px; font-weight: 700; color: #4c1d95; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🌾 Farm Control — Điều khiển dàn máy (Giai đoạn 3.1)</h1>
+  <h1>🌾 Farm Control — Điều khiển dàn máy (Giai đoạn 3.2)</h1>
   <p><span class="dot" id="serverDot"></span><span id="serverInfo">Đang nối server...</span></p>
 </header>
 <main>
   <div class="counters">
     <div class="counter"><div class="num" id="cTotal">0</div><div class="lbl">Tổng số máy</div></div>
-    <div class="counter"><div class="num" id="cOnline">0</div><div class="lbl">Đang online</div></div>
-    <div class="counter"><div class="num" id="cGmail">0</div><div class="lbl">Gmail sẵn sàng trong kho</div></div>
-    <div class="counter"><div class="num" id="cManual">0</div><div class="lbl">Máy đang chờ chạm tay</div></div>
-    <div class="counter"><div class="num" id="cCheckin">0</div><div class="lbl">🐷 Check-in thành công</div></div>
+    <div class="counter green"><div class="num" id="cOnline">0</div><div class="lbl">Đang online</div></div>
+    <div class="counter pink"><div class="num" id="cGmail">0</div><div class="lbl">Gmail sẵn sàng trong kho</div></div>
+    <div class="counter amber"><div class="num" id="cHeo">0</div><div class="lbl">TK heo sẵn sàng trong kho</div></div>
+    <div class="counter blue"><div class="num" id="cCheckin">0</div><div class="lbl">🐷 Check-in thành công</div></div>
   </div>
 
-  <div id="empty" style="display:none">Chưa có máy nào kết nối. Mở app <b>Farm Agent</b> trên điện thoại, nhập IP của MacBook này, cổng 8787, rồi bấm “Lưu &amp; Kết nối”.</div>
-  <div id="devices"></div>
-
-  <div class="panel" id="pipelinePanel">
-    <h2>⚙️ Chạy quy trình (Pipeline)</h2>
-    <div class="row">
-      <label>Quy trình:
-        <select id="pipeSelect"></select>
-      </label>
-      <button id="pipeStop" class="danger" disabled>Dừng quy trình</button>
-    </div>
-    <div class="row">
-      <label>URL APK LINE (tùy chọn): <input type="text" id="lineUrl" size="34" placeholder="http://IP:8080/apks/line.apk"></label>
-      <label>URL APK TikTok Lite (tùy chọn): <input type="text" id="tiktokUrl" size="34" placeholder="http://IP:8080/apks/tiktok-lite.apk"></label>
-    </div>
-    <div class="row">
-      <label>Link game (chỉ cho quy trình Quét game): <input type="text" id="gameUrl" size="40" placeholder="Để trống = mở app TikTok Lite"></label>
-      <label>Thời gian xem: <input type="text" id="watchMinutes" size="4" value="30"> phút</label>
-    </div>
-    <div class="small">Để trống URL APK thì bước cài app tương ứng sẽ được bỏ qua (có ghi chú). Các bước “Chờ chạm tay” (đăng nhập Google / số điện thoại / CAPTCHA) vẫn làm bằng tay, xong bấm “Đã xử lý — chạy tiếp”. Quy trình <b>Quét game &amp; xem video</b> sẽ bật vòng xem chạy nền: máy tự vuốt video và tự báo khi check-in thành công — theo dõi ở thẻ máy và nhật ký sự kiện.</div>
-    <div class="devchecks" id="pipeDevices"></div>
-    <div class="row">
-      <button id="pipeStart">▶ Bắt đầu chạy cho máy đã chọn</button>
-      <span class="small" id="pipeMsg"></span>
-    </div>
-    <div id="runs"></div>
+  <div class="tabbar">
+    <button class="tabbtn active" data-tab="danmay">📱 Dàn máy</button>
+    <button class="tabbtn" data-tab="kho">🗄 Kho dữ liệu</button>
+    <button class="tabbtn" data-tab="tacvu">⚙ Tác vụ</button>
+    <button class="tabbtn" data-tab="hanhdong">▶ Hành động</button>
   </div>
 
-  <div class="panel" id="gmailPanel">
-    <h2>✉️ Kho Gmail</h2>
-    <div class="small">Nhập mỗi dòng một tài khoản, dạng <b>email|mật khẩu</b> hoặc <b>email:mật khẩu</b>. Mật khẩu được lưu ở server và <b>luôn hiển thị dạng che</b> — chỉ được gửi thẳng tới máy khi chạy đăng nhập. <b>Mới (3.1):</b> nút <b>✉️ Cấp Gmail</b> ngay trên thẻ máy sẽ chạy quy trình tự động: cấp tài khoản từ kho, máy tự mở màn hình đăng nhập Google, tự nhập email + mật khẩu và bấm Tiếp theo — chỉ dừng <b>“Chờ chạm tay”</b> khi Google bắt xác minh (CAPTCHA / mã điện thoại), xử lý trên máy xong bấm “Đã xử lý — chạy tiếp” ở mục Pipeline.</div>
-    <textarea id="gmailImportText" placeholder="vidu@gmail.com|matkhau123&#10;vidu2@gmail.com:matkhau456"></textarea>
+  <!-- ============ TAB 1: DAN MAY ============ -->
+  <section class="panelpage active" id="panel-danmay">
     <div class="row">
-      <button id="gmailImportBtn">Nhập vào kho</button>
-      <span class="small" id="gmailMsg"></span>
+      <button class="ghost" id="selAllOnline">Chọn tất cả máy Online</button>
+      <button class="ghost" id="selNone">Bỏ chọn hết</button>
+      <span class="selinfo" id="selInfo">Đang chọn: 0 máy</span>
     </div>
-    <div class="row">
-      <label>Cấp tài khoản tiếp theo cho máy:
-        <select id="assignDevice"></select>
-      </label>
-      <button id="assignBtn">Cấp Gmail</button>
-      <button id="signinBtn" class="warn">Hỗ trợ đăng nhập (gửi email + mật khẩu tới máy)</button>
-    </div>
-    <div style="overflow:auto">
-      <table>
-        <thead><tr><th>Email</th><th>Mật khẩu</th><th>Trạng thái</th><th>Máy được cấp</th><th></th></tr></thead>
-        <tbody id="gmailBody"></tbody>
-      </table>
-    </div>
-  </div>
+    <div id="empty" style="display:none">Chưa có máy nào kết nối. Mở app <b>Farm Agent</b> trên điện thoại, nhập IP của MacBook này, cổng 8787, rồi bấm “Lưu &amp; Kết nối”.</div>
+    <div id="devices"></div>
 
-  <div class="panel" id="qrPanel">
-    <h2>📷 Ghi danh Device Owner (QR)</h2>
-    <div class="small">Dùng cho máy vừa factory reset: ở màn hình chào đầu tiên, chạm 6 lần để mở quét QR, kết nối WiFi rồi quét mã chứa nội dung JSON dưới đây (dán JSON vào bất kỳ trang tạo mã QR nào). Sau ghi danh, máy mới reset từ xa được. Chi tiết từng bước xem file HUONG-DAN.md.</div>
-    <div class="row"><button id="qrLoad" class="ghost">Tải nội dung QR</button><button id="qrCopy" class="ghost" disabled>Chép JSON</button></div>
-    <pre class="qr" id="qrPre" style="display:none"></pre>
-  </div>
+    <div class="panel" id="qrPanel">
+      <h2>📷 Ghi danh Device Owner (QR)</h2>
+      <div class="small">Dùng cho máy vừa factory reset: ở màn hình chào đầu tiên, chạm 6 lần để mở quét QR, kết nối WiFi rồi quét mã chứa nội dung JSON dưới đây (dán JSON vào bất kỳ trang tạo mã QR nào). Sau ghi danh, máy mới reset từ xa được. Chi tiết từng bước xem file HUONG-DAN.md.</div>
+      <div class="row"><button id="qrLoad" class="ghost">Tải nội dung QR</button><button id="qrCopy" class="ghost" disabled>Chép JSON</button></div>
+      <pre class="qr" id="qrPre" style="display:none"></pre>
+    </div>
+  </section>
 
-  <div class="panel">
-    <h2>📜 Nhật ký sự kiện</h2>
-    <div id="log"></div>
-  </div>
+  <!-- ============ TAB 2: KHO DU LIEU ============ -->
+  <section class="panelpage" id="panel-kho">
+    <div class="khoGrid">
+      <div class="panel" id="gmailPanel" style="margin-bottom:0">
+        <h2>✉️ Kho Gmail</h2>
+        <div class="small">Mỗi dòng một tài khoản: <b>email|mật khẩu</b> hoặc <b>email:mật khẩu</b>. Mật khẩu luôn hiển thị dạng che — chỉ gửi thẳng tới máy khi chạy đăng nhập.</div>
+        <textarea id="gmailImportText" placeholder="vidu@gmail.com|matkhau123&#10;vidu2@gmail.com:matkhau456"></textarea>
+        <div class="row">
+          <button id="gmailImportBtn">Nhập vào kho</button>
+          <span class="small" id="gmailMsg"></span>
+        </div>
+        <div class="row">
+          <label>Cấp tài khoản tiếp theo cho máy:
+            <select id="assignDevice"></select>
+          </label>
+          <button id="assignBtn">Cấp Gmail</button>
+          <button id="signinBtn" class="warn">Hỗ trợ đăng nhập</button>
+        </div>
+        <div style="overflow:auto">
+          <table>
+            <thead><tr><th>Email</th><th>Mật khẩu</th><th>Trạng thái</th><th>Máy được cấp</th><th></th></tr></thead>
+            <tbody id="gmailBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" id="heoPanel" style="margin-bottom:0">
+        <h2>🐷 Kho tài khoản xem heo (chưa đăng nhập)</h2>
+        <div class="small">Mỗi dòng một tài khoản TikTok Lite: <b>username|mật khẩu</b> hoặc <b>username:mật khẩu</b>. Mật khẩu luôn hiển thị dạng che — chỉ gửi thẳng tới máy khi chạy “Đăng nhập TikTok Lite bằng TK trong kho”.</div>
+        <textarea id="heoImportText" placeholder="nikheo01|matkhau123&#10;nikheo02:matkhau456"></textarea>
+        <div class="row">
+          <button id="heoImportBtn" class="warn">Nhập vào kho</button>
+          <span class="small" id="heoMsg"></span>
+        </div>
+        <div class="row">
+          <label>Cấp tài khoản tiếp theo cho máy:
+            <select id="heoAssignDevice"></select>
+          </label>
+          <button id="heoAssignBtn" class="warn">Cấp TK heo</button>
+        </div>
+        <div style="overflow:auto">
+          <table>
+            <thead><tr><th>Tài khoản</th><th>Mật khẩu</th><th>Trạng thái</th><th>Máy được cấp</th><th></th></tr></thead>
+            <tbody id="heoBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 3: TAC VU ============ -->
+  <section class="panelpage" id="panel-tacvu">
+    <div class="row"><span class="selinfo" id="selInfo2">Đang chọn: 0 máy</span><span class="small">(chọn máy ở tab 📱 Dàn máy)</span></div>
+    <div class="taskGrid">
+      <div class="task">
+        <h3>🔑 Đăng nhập tài khoản Google</h3>
+        <p>Cấp Gmail từ kho cho các máy đã chọn rồi tự đăng nhập Google (tự nhập email + mật khẩu, chỉ dừng chờ chạm tay khi Google bắt xác minh).</p>
+        <button id="taskGoogle">▶ Chạy cho máy đã chọn</button>
+      </div>
+      <div class="task">
+        <h3>💬 Tải LINE</h3>
+        <p>Gửi link APK LINE cho các máy đã chọn — máy tự tải và mở trình cài đặt (chạm “Cài đặt” trên máy).</p>
+        <input type="text" id="taskLineUrl" placeholder="http://IP:8080/apks/line.apk">
+        <button id="taskLine" class="blue">▶ Chạy cho máy đã chọn</button>
+      </div>
+      <div class="task">
+        <h3>🎵 Tải TikTok Lite</h3>
+        <p>Gửi link APK TikTok Lite cho các máy đã chọn — máy tự tải và mở trình cài đặt (chạm “Cài đặt” trên máy).</p>
+        <input type="text" id="taskTiktokUrl" placeholder="http://IP:8080/apks/tiktok-lite.apk">
+        <button id="taskTiktok" class="pink">▶ Chạy cho máy đã chọn</button>
+      </div>
+      <div class="task">
+        <h3>🐷 Đăng nhập TikTok Lite bằng TK trong kho</h3>
+        <p>Cấp tài khoản từ kho heo cho các máy đã chọn rồi tự đăng nhập TikTok Lite (tự nhập tài khoản + mật khẩu, dừng chờ chạm tay khi TikTok bắt xác minh).</p>
+        <button id="taskTtLogin" class="warn">▶ Chạy cho máy đã chọn</button>
+      </div>
+    </div>
+
+    <div class="panel" id="pipelinePanel">
+      <h2>⚙️ Pipeline — tất cả quy trình</h2>
+      <div class="row">
+        <label>Quy trình:
+          <select id="pipeSelect"></select>
+        </label>
+        <button id="pipeStop" class="danger" disabled>Dừng quy trình</button>
+      </div>
+      <div class="row">
+        <label>URL APK LINE (tùy chọn): <input type="text" id="lineUrl" size="32" placeholder="http://IP:8080/apks/line.apk"></label>
+        <label>URL APK TikTok Lite (tùy chọn): <input type="text" id="tiktokUrl" size="32" placeholder="http://IP:8080/apks/tiktok-lite.apk"></label>
+      </div>
+      <div class="row">
+        <label>Link game (quy trình Quét game): <input type="text" id="gameUrl" size="38" placeholder="Để trống = mở app TikTok Lite"></label>
+        <label>Thời gian xem: <input type="text" id="pipeMinutes" size="4" value="30"> phút</label>
+      </div>
+      <div class="row">
+        <button id="pipeStart">▶ Bắt đầu chạy cho máy đã chọn</button>
+        <span class="small" id="pipeMsg"></span>
+      </div>
+      <div id="runs"></div>
+    </div>
+
+    <div class="panel">
+      <h2>📜 Nhật ký sự kiện</h2>
+      <div id="log"></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 4: HANH DONG ============ -->
+  <section class="panelpage" id="panel-hanhdong">
+    <div class="row"><span class="selinfo" id="selInfo3">Đang chọn: 0 máy</span><span class="small">(chọn máy ở tab 📱 Dàn máy)</span></div>
+    <div class="taskGrid">
+      <div class="task">
+        <h3>📅 Điểm danh 14 ngày</h3>
+        <p>Mở TikTok Lite trên các máy đã chọn, vào mục điểm danh và bấm điểm danh hôm nay. Đủ 14 ngày là hoàn thành một chu kỳ.</p>
+        <button id="btnDiemDanh">▶ Điểm danh cho máy đã chọn</button>
+      </div>
+      <div class="task">
+        <h3>▶️ Tự động xem video</h3>
+        <p>Máy tự vuốt xem video liên tục trong số phút đã đặt — xem video thường, không quét điểm danh/check heo.</p>
+        <input type="text" id="videoGameUrl" placeholder="Link game (tùy chọn — trống = mở TikTok Lite)">
+        <div class="row" style="margin:0 0 8px">
+          <label>Xem: <input type="text" id="videoMinutes" size="4" value="30"> phút</label>
+        </div>
+        <button id="btnVideoStart" class="blue">▶ Bắt đầu xem</button>
+        <button id="btnVideoStop" class="ghost">■ Dừng xem</button>
+      </div>
+      <div class="task">
+        <h3>🐷 Check heo</h3>
+        <p>Máy đã quét ăn game — check xem video hằng ngày để Nik mời nhận thêm tiền thưởng. Máy mở link game chuyên dụng, tự xem video; thấy chữ check-in/thưởng thành công là tự báo về và dừng.</p>
+        <label class="small" style="display:block;margin-bottom:4px"><b>Link game chuyên dụng (hoặc nội dung mã QR)</b> — bắt buộc: Nik xem cần quét mã QR chuyên dụng hoặc mở link này để xem thì bên này ăn mới báo thành công. Link được lưu trên server, khỏi dán lại mỗi ngày.</label>
+        <input type="text" id="heoGameUrl" placeholder="Dán link game chuyên dụng vào đây (bắt buộc)">
+        <div class="row" style="margin:0 0 8px">
+          <label>Xem tối đa: <input type="text" id="watchMinutes" size="4" value="30"> phút</label>
+        </div>
+        <button id="btnHeoStart" class="pink">▶ Bắt đầu check heo</button>
+        <button id="btnHeoStop" class="ghost">■ Dừng check</button>
+        <div class="small" style="margin-top:8px">🐷 Check-in thành công: <b id="hdCheckinCount">0</b></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>📅 Tiến độ điểm danh 14 ngày theo máy</h2>
+      <div id="checkinList"><span class="small">Chưa có máy nào điểm danh.</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>🐷 Nhật ký check-in / xem video</h2>
+      <div id="logHd"></div>
+    </div>
+  </section>
 </main>
 
 <div id="modal">
@@ -156,9 +292,12 @@
 var devicesEl = document.getElementById('devices');
 var emptyEl = document.getElementById('empty');
 var logEl = document.getElementById('log');
+var logHdEl = document.getElementById('logHd');
 var shots = {}; // deviceId -> base64 image
 var lastDevices = [];
+var selectedMap = {}; // deviceId -> true/false (giu qua cac lan lam moi)
 var prevRunSnapshot = '';
+var currentRunId = null;
 
 function el(tag, cls, text) {
   var e = document.createElement(tag);
@@ -166,7 +305,7 @@ function el(tag, cls, text) {
   if (text !== undefined && text !== null) e.textContent = text;
   return e;
 }
-function logLine(text, kind) {
+function logTo(box, text, kind) {
   var t = new Date().toLocaleTimeString('vi-VN');
   var div = document.createElement('div');
   if (kind === true) div.className = 'ok-t';
@@ -174,8 +313,10 @@ function logLine(text, kind) {
   else if (kind === 'wait') div.className = 'wait-t';
   else if (kind === 'checkin') div.className = 'checkin-t';
   div.textContent = '[' + t + '] ' + text;
-  logEl.prepend(div);
+  box.prepend(div);
 }
+function logLine(text, kind) { logTo(logEl, text, kind); }
+function hdLogLine(text, kind) { logTo(logHdEl, text, kind); }
 function fmtAgo(ts) {
   if (!ts) return '—';
   var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -194,7 +335,44 @@ function errText(err) {
   if (err === 'no_root') return 'no_root (không đọc được màn hình hiện tại)';
   return err || 'không rõ lỗi';
 }
+function mkBtn(text, fn, cls) {
+  var b = el('button', cls || '', text);
+  b.onclick = fn;
+  return b;
+}
+function devById(id) {
+  for (var i = 0; i < lastDevices.length; i++) if (lastDevices[i].id === id) return lastDevices[i];
+  return null;
+}
+function nameOfDevice(id) {
+  var d = devById(id);
+  return d ? (d.label || d.id) : id;
+}
+function isSelected(d) {
+  return selectedMap[d.id] !== undefined ? !!selectedMap[d.id] : d.online;
+}
+function getSelectedIds() {
+  return lastDevices.filter(isSelected).map(function (d) { return d.id; });
+}
+function updateSelInfo() {
+  var n = getSelectedIds().length;
+  ['selInfo', 'selInfo2', 'selInfo3'].forEach(function (id) {
+    var e = document.getElementById(id);
+    if (e) e.textContent = 'Đang chọn: ' + n + ' máy';
+  });
+}
 
+// ---------- Tabs ----------
+document.querySelectorAll('.tabbtn').forEach(function (b) {
+  b.onclick = function () {
+    document.querySelectorAll('.tabbtn').forEach(function (x) { x.classList.remove('active'); });
+    document.querySelectorAll('.panelpage').forEach(function (x) { x.classList.remove('active'); });
+    b.classList.add('active');
+    document.getElementById('panel-' + b.getAttribute('data-tab')).classList.add('active');
+  };
+});
+
+// ---------- Gui lenh truc tiep ----------
 function sendCmd(id, label, cmd, args) {
   logLine(label + ' → gửi lệnh ' + cmd + ' ...', null);
   return fetch('/api/cmd', {
@@ -212,6 +390,7 @@ function sendCmd(id, label, cmd, args) {
       if (cmd === 'status' && j.data) {
         extra = ' — pin ' + j.data.battery + '%, mạng ' + j.data.network + ', màn hình ' + (j.data.screenOn ? 'đang bật' : 'đang tắt');
       }
+      if (cmd === 'install_url') extra = ' (đã mở trình cài đặt trên máy)';
       logLine(label + ' → ' + cmd + ': THÀNH CÔNG' + extra, true);
     } else {
       logLine(label + ' → ' + cmd + ': LỖI ' + errText(j && j.error), false);
@@ -222,13 +401,9 @@ function sendCmd(id, label, cmd, args) {
     return null;
   });
 }
+</script>
 
-function mkBtn(text, fn, cls) {
-  var b = el('button', cls || '', text);
-  b.onclick = fn;
-  return b;
-}
-
+<script>
 // ---------- Danh sach may ----------
 function renderDevices(list) {
   lastDevices = list;
@@ -238,10 +413,15 @@ function renderDevices(list) {
   emptyEl.style.display = list.length ? 'none' : 'block';
   list.forEach(function (d) {
     var card = el('div', 'card' + (d.online ? '' : ' off'));
-    var name = d.label || d.id;
-    var h = el('h2', '', '📱 ' + name + ' ');
-    var badge = el('span', 'badge ' + (d.online ? 'on' : 'offb'), d.online ? 'Online' : 'Offline');
-    h.appendChild(badge);
+    var h = el('h2', '');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = isSelected(d);
+    cb.title = 'Chọn máy này để chạy tác vụ / hành động';
+    cb.onchange = function () { selectedMap[d.id] = cb.checked; updateSelInfo(); };
+    h.appendChild(cb);
+    h.appendChild(document.createTextNode('📱 ' + (d.label || d.id) + ' '));
+    h.appendChild(el('span', 'badge ' + (d.online ? 'on' : 'offb'), d.online ? 'Online' : 'Offline'));
     card.appendChild(h);
 
     var meta = el('div', 'meta');
@@ -256,17 +436,20 @@ function renderDevices(list) {
       if (i < lines.length - 1) meta.appendChild(document.createElement('br'));
     });
     meta.appendChild(document.createElement('br'));
-    var bDo = el('span', 'badge ' + (d.deviceOwner ? 'b-do' : 'b-no'), d.deviceOwner ? 'Device Owner ✔' : 'Chưa Device Owner');
-    var bA = el('span', 'badge ' + (d.accessibility ? 'b-a11y' : 'b-no'), d.accessibility ? 'Trợ năng ✔' : 'Chưa Trợ năng');
-    meta.appendChild(bDo);
-    meta.appendChild(bA);
+    meta.appendChild(el('span', 'badge ' + (d.deviceOwner ? 'b-do' : 'b-no'), d.deviceOwner ? 'Device Owner ✔' : 'Chưa Device Owner'));
+    meta.appendChild(el('span', 'badge ' + (d.accessibility ? 'b-a11y' : 'b-no'), d.accessibility ? 'Trợ năng ✔' : 'Chưa Trợ năng'));
+    meta.appendChild(document.createElement('br'));
+    meta.appendChild(el('span', 'badge ' + (d.gmailAssigned ? 'b-gmail' : 'b-no'), d.gmailAssigned ? '✉️ ' + d.gmailAssigned : 'Chưa có Gmail'));
+    meta.appendChild(el('span', 'badge ' + (d.heoAssigned ? 'b-heo' : 'b-no'), d.heoAssigned ? '🐷 TK: ' + d.heoAssigned : 'Chưa có TK heo'));
+    var ck = d.checkin || { count: 0, todayDone: false, complete: false };
+    meta.appendChild(el('span', 'badge b-ck', '📅 Điểm danh: ' + ck.count + '/14' + (ck.complete ? ' ✔ ĐỦ' : (ck.todayDone ? ' · hôm nay ✔' : ''))));
     if (d.watch) {
       meta.appendChild(document.createElement('br'));
       var wTxt = null, wCls = 'b-no';
-      if (d.watch.status === 'watching' || d.watch.status === 'starting') { wTxt = '🐷 Đang quét game & xem video (' + d.watch.rounds + ' vòng)'; wCls = 'b-watch'; }
+      if (d.watch.status === 'watching' || d.watch.status === 'starting') { wTxt = (d.watch.detect ? '🐷 Đang check heo & xem video (' : '▶ Đang xem video (') + d.watch.rounds + ' vòng)'; wCls = 'b-watch'; }
       else if (d.watch.status === 'da_checkin') { wTxt = '🎉 ĐÃ CHECK-IN THÀNH CÔNG'; wCls = 'b-checkin'; }
-      else if (d.watch.status === 'error') { wTxt = 'Xem game: lỗi'; wCls = 'b-no'; }
-      else if (d.watch.status === 'stopped') { wTxt = 'Xem game: đã dừng'; wCls = 'b-no'; }
+      else if (d.watch.status === 'error') { wTxt = 'Xem video: lỗi'; wCls = 'b-no'; }
+      else if (d.watch.status === 'stopped') { wTxt = 'Xem video: đã dừng'; wCls = 'b-no'; }
       if (wTxt) meta.appendChild(el('span', 'badge ' + wCls, wTxt));
       if (d.watch.note) meta.appendChild(el('div', 'small', d.watch.note));
     }
@@ -275,49 +458,10 @@ function renderDevices(list) {
     var btns = el('div', 'btns');
     var dis = !d.online;
     function addBtn(text, fn, cls) { var b = mkBtn(text, fn, cls); b.disabled = dis; btns.appendChild(b); }
-    addBtn('Trạng thái', function () { sendCmd(d.id, name, 'status', {}); });
-    addBtn('Đánh thức', function () { sendCmd(d.id, name, 'wake', {}); });
-    addBtn('Chụp màn hình', function () { sendCmd(d.id, name, 'screenshot', {}); });
-    addBtn('Mở TikTok Lite', function () { sendCmd(d.id, name, 'open_app', { 'package': 'com.zhiliaoapp.musically.go' }); });
-    addBtn('✉️ Cấp Gmail', function () {
-      logLine(name + ': bắt đầu Cấp Gmail tự động (cấp tài khoản + tự đăng nhập Google)...', null);
-      fetch('/api/pipeline/start', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipelineId: 'cap-gmail-tu-dong', deviceIds: [d.id], params: {} })
-      }).then(function (r) { return r.json(); }).then(function (j) {
-        if (j && j.ok) {
-          currentRunId = j.runId;
-          document.getElementById('pipeStop').disabled = false;
-          logLine(name + ': quy trình Cấp Gmail tự động đã chạy (' + j.runId + ') — theo dõi ở mục Pipeline và nhật ký', true);
-        } else {
-          logLine(name + ': không chạy được Cấp Gmail tự động: ' + ((j && j.error) || '?'), false);
-        }
-        refreshRuns();
-        refreshGmail();
-      }).catch(function (e) { logLine(name + ': lỗi Cấp Gmail (' + e + ')', false); });
-    }, 'warn');
-    if (d.watch && (d.watch.status === 'watching' || d.watch.status === 'starting')) {
-      addBtn('■ Dừng xem game', function () {
-        fetch('/api/watch/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIds: [d.id] }) })
-          .then(function (r) { return r.json(); }).then(function (j) {
-            logLine(name + ': đã dừng vòng xem game', j && j.ok);
-            refreshDevices();
-          });
-      }, 'warn');
-    } else {
-      addBtn('🐷 Quét game & xem video', function () {
-        var mins = parseInt((document.getElementById('watchMinutes') || {}).value, 10) || 30;
-        var gurl = ((document.getElementById('gameUrl') || {}).value || '').trim();
-        logLine(name + ': bật vòng quét game & xem video (' + mins + ' phút)...', null);
-        fetch('/api/watch/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIds: [d.id], minutes: mins, gameUrl: gurl }) })
-          .then(function (r) { return r.json(); }).then(function (j) {
-            var res = j && j.results && j.results[0];
-            if (res && res.ok) logLine(name + ': vòng xem game đã chạy', true);
-            else logLine(name + ': không bật được vòng xem (' + ((res && res.error) || (res && res.watch && res.watch.note) || '?') + ')', false);
-            refreshDevices();
-          }).catch(function (e) { logLine(name + ': lỗi bật vòng xem (' + e + ')', false); });
-      }, 'ghost');
-    }
+    addBtn('Trạng thái', function () { sendCmd(d.id, d.label || d.id, 'status', {}); });
+    addBtn('Đánh thức', function () { sendCmd(d.id, d.label || d.id, 'wake', {}); });
+    addBtn('Chụp màn hình', function () { sendCmd(d.id, d.label || d.id, 'screenshot', {}); });
+    addBtn('✉️ Cấp Gmail', function () { startPipeline('cap-gmail-tu-dong', [d.id], {}, 'Cấp Gmail tự động → ' + (d.label || d.id)); }, 'warn');
     addBtn('Xem riêng', function () { openModal(d); }, 'ghost');
     card.appendChild(btns);
 
@@ -331,9 +475,17 @@ function renderDevices(list) {
     }
     devicesEl.appendChild(card);
   });
-  renderPipeDeviceChecks(list);
   renderAssignDevices(list);
+  updateSelInfo();
 }
+document.getElementById('selAllOnline').onclick = function () {
+  lastDevices.forEach(function (d) { selectedMap[d.id] = d.online; });
+  renderDevices(lastDevices);
+};
+document.getElementById('selNone').onclick = function () {
+  lastDevices.forEach(function (d) { selectedMap[d.id] = false; });
+  renderDevices(lastDevices);
+};
 
 // ---------- Modal xem rieng ----------
 var modalDev = null;
@@ -363,10 +515,6 @@ function openModal(d) {
   mb('Đánh thức', function () { sendCmd(d.id, d.label || d.id, 'wake', {}); });
   document.getElementById('modal').style.display = 'block';
 }
-function devById(id) {
-  for (var i = 0; i < lastDevices.length; i++) if (lastDevices[i].id === id) return lastDevices[i];
-  return null;
-}
 document.getElementById('modalClose').onclick = function () {
   document.getElementById('modal').style.display = 'none';
 };
@@ -374,42 +522,42 @@ document.getElementById('modal').addEventListener('click', function (e) {
   if (e.target === this) this.style.display = 'none';
 });
 
-// ---------- Kho Gmail ----------
-function renderGmail(j) {
-  document.getElementById('cGmail').textContent = j.ready || 0;
-  var body = document.getElementById('gmailBody');
+// ---------- Kho Gmail + Kho heo ----------
+function renderPoolTable(bodyId, accounts, kind) {
+  var body = document.getElementById(bodyId);
   body.innerHTML = '';
-  (j.accounts || []).forEach(function (a) {
+  (accounts || []).forEach(function (a) {
     var tr = document.createElement('tr');
     function td(text) { var c = el('td', '', text); tr.appendChild(c); return c; }
-    td(a.email);
+    td(kind === 'gmail' ? a.email : a.username);
     td(a.passwordMasked || '********');
     var stText = a.status === 'ready' ? 'Sẵn sàng' : (a.status === 'assigned' ? 'Đã cấp' : 'Die');
+    if (kind === 'heo' && a.status === 'assigned' && a.loggedInAt) stText = 'Đã cấp · đã đăng nhập';
     td(stText);
-    td(a.deviceId ? (nameOfDevice(a.deviceId)) : '—');
+    td(a.deviceId ? nameOfDevice(a.deviceId) : '—');
     var ops = el('td', '');
     if (a.status !== 'die') {
       ops.appendChild(mkBtn('Đánh dấu die', function () {
-        fetch('/api/gmail/mark-die', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
+        fetch('/api/' + kind + '/mark-die', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
           .then(function (r) { return r.json(); }).then(function (x) {
-            logLine('Gmail ' + a.email + ': đã đánh dấu die', x && x.ok);
-            refreshGmail();
+            logLine((kind === 'gmail' ? 'Gmail ' : 'TK heo ') + (a.email || a.username) + ': đã đánh dấu die', x && x.ok);
+            refreshPools();
           });
       }, 'warn'));
     }
     ops.appendChild(document.createTextNode(' '));
     ops.appendChild(mkBtn('Xoá', function () {
-      if (!confirm('Xoá tài khoản ' + a.email + ' khỏi kho?')) return;
-      fetch('/api/gmail/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
+      if (!confirm('Xoá tài khoản ' + (a.email || a.username) + ' khỏi kho?')) return;
+      fetch('/api/' + kind + '/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
         .then(function (r) { return r.json(); }).then(function (x) {
-          logLine('Gmail ' + a.email + ': đã xoá khỏi kho', x && x.ok);
-          refreshGmail();
+          logLine((kind === 'gmail' ? 'Gmail ' : 'TK heo ') + (a.email || a.username) + ': đã xoá khỏi kho', x && x.ok);
+          refreshPools();
         });
     }, 'danger'));
     tr.appendChild(ops);
     body.appendChild(tr);
   });
-  if (!(j.accounts || []).length) {
+  if (!(accounts || []).length) {
     var tr2 = document.createElement('tr');
     var c = el('td', 'small', 'Kho đang trống — nhập tài khoản ở ô phía trên.');
     c.colSpan = 5;
@@ -417,38 +565,48 @@ function renderGmail(j) {
     body.appendChild(tr2);
   }
 }
-function nameOfDevice(id) {
-  var d = devById(id);
-  return d ? (d.label || d.id) : id;
-}
 function renderAssignDevices(list) {
-  var sel = document.getElementById('assignDevice');
-  var cur = sel.value;
-  sel.innerHTML = '';
-  list.forEach(function (d) {
-    var o = document.createElement('option');
-    o.value = d.id;
-    o.textContent = (d.label || d.id) + (d.online ? '' : ' (offline)');
-    sel.appendChild(o);
+  [['assignDevice'], ['heoAssignDevice']].forEach(function (pair) {
+    var sel = document.getElementById(pair[0]);
+    if (!sel) return;
+    var cur = sel.value;
+    sel.innerHTML = '';
+    list.forEach(function (d) {
+      var o = document.createElement('option');
+      o.value = d.id;
+      o.textContent = (d.label || d.id) + (d.online ? '' : ' (offline)');
+      sel.appendChild(o);
+    });
+    if (cur) sel.value = cur;
   });
-  if (cur) sel.value = cur;
 }
-function refreshGmail() {
+function refreshPools() {
   fetch('/api/gmail').then(function (r) { return r.json(); }).then(function (j) {
-    if (j && j.ok) renderGmail(j);
+    if (j && j.ok) {
+      document.getElementById('cGmail').textContent = j.ready || 0;
+      renderPoolTable('gmailBody', j.accounts, 'gmail');
+    }
+  }).catch(function () {});
+  fetch('/api/heo').then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) {
+      document.getElementById('cHeo').textContent = j.ready || 0;
+      renderPoolTable('heoBody', j.accounts, 'heo');
+    }
   }).catch(function () {});
 }
-document.getElementById('gmailImportBtn').onclick = function () {
-  var text = document.getElementById('gmailImportText').value;
-  if (!text.trim()) { document.getElementById('gmailMsg').textContent = 'Chưa nhập gì.'; return; }
-  fetch('/api/gmail/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }) })
+function importPool(kind, textId, msgId) {
+  var text = document.getElementById(textId).value;
+  if (!text.trim()) { document.getElementById(msgId).textContent = 'Chưa nhập gì.'; return; }
+  fetch('/api/' + kind + '/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }) })
     .then(function (r) { return r.json(); }).then(function (j) {
-      document.getElementById('gmailMsg').textContent = 'Đã thêm ' + j.added + ' tài khoản, bỏ qua ' + j.skipped + ' (trùng/không hợp lệ). Tổng kho: ' + j.total;
-      logLine('Nhập kho Gmail: +' + j.added + ', bỏ qua ' + j.skipped, true);
-      document.getElementById('gmailImportText').value = '';
-      refreshGmail();
-    }).catch(function (e) { logLine('Nhập kho Gmail lỗi: ' + e, false); });
-};
+      document.getElementById(msgId).textContent = 'Đã thêm ' + j.added + ' tài khoản, bỏ qua ' + j.skipped + ' (trùng/không hợp lệ). Tổng kho: ' + j.total;
+      logLine('Nhập kho ' + (kind === 'gmail' ? 'Gmail' : 'heo') + ': +' + j.added + ', bỏ qua ' + j.skipped, true);
+      document.getElementById(textId).value = '';
+      refreshPools();
+    }).catch(function (e) { logLine('Nhập kho lỗi: ' + e, false); });
+}
+document.getElementById('gmailImportBtn').onclick = function () { importPool('gmail', 'gmailImportText', 'gmailMsg'); };
+document.getElementById('heoImportBtn').onclick = function () { importPool('heo', 'heoImportText', 'heoMsg'); };
 document.getElementById('assignBtn').onclick = function () {
   var deviceId = document.getElementById('assignDevice').value;
   if (!deviceId) return;
@@ -456,13 +614,23 @@ document.getElementById('assignBtn').onclick = function () {
     .then(function (r) { return r.json(); }).then(function (j) {
       if (j && j.ok) logLine('Đã cấp ' + j.account.email + ' cho máy ' + nameOfDevice(deviceId), true);
       else logLine('Cấp Gmail thất bại: ' + ((j && j.error) || '?') + (j && j.error === 'pool_empty' ? ' (kho hết tài khoản sẵn sàng)' : ''), false);
-      refreshGmail();
+      refreshPools();
+    });
+};
+document.getElementById('heoAssignBtn').onclick = function () {
+  var deviceId = document.getElementById('heoAssignDevice').value;
+  if (!deviceId) return;
+  fetch('/api/heo/assign-next', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) logLine('Đã cấp TK heo ' + j.account.username + ' cho máy ' + nameOfDevice(deviceId), true);
+      else logLine('Cấp TK heo thất bại: ' + ((j && j.error) || '?') + (j && j.error === 'pool_empty' ? ' (kho hết tài khoản sẵn sàng)' : ''), false);
+      refreshPools();
     });
 };
 document.getElementById('signinBtn').onclick = function () {
   var deviceId = document.getElementById('assignDevice').value;
   if (!deviceId) return;
-  logLine('Hỗ trợ đăng nhập → ' + nameOfDevice(deviceId) + ': đang gửi email + mật khẩu qua agent...', null);
+  logLine('Hỗ trợ đăng nhập → ' + nameOfDevice(deviceId) + ': đang chạy trình tự đăng nhập Google tự động...', null);
   fetch('/api/gmail/signin-assist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId }) })
     .then(function (r) { return r.json(); }).then(function (j) {
       if (!j) return;
@@ -471,28 +639,29 @@ document.getElementById('signinBtn').onclick = function () {
         logLine('  • bước ' + s.step + ': ' + (s.ok ? 'OK' : 'LỖI ' + errText(s.error)), s.ok);
       });
       logLine('Hỗ trợ đăng nhập ' + j.email + ': ' + (j.ok ? 'xong' : 'chưa xong — xem bước lỗi phía trên'), j.ok);
-      refreshGmail();
+      refreshPools();
     }).catch(function (e) { logLine('Hỗ trợ đăng nhập lỗi: ' + e, false); });
 };
+</script>
 
+<script>
 // ---------- Pipeline ----------
-var currentRunId = null;
-function renderPipeDeviceChecks(list) {
-  var wrap = document.getElementById('pipeDevices');
-  var checked = {};
-  wrap.querySelectorAll('input[type=checkbox]').forEach(function (c) { checked[c.value] = c.checked; });
-  wrap.innerHTML = '';
-  if (!list.length) { wrap.appendChild(el('span', 'small', 'Chưa có máy nào.')); return; }
-  list.forEach(function (d) {
-    var lab = document.createElement('label');
-    var cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = d.id;
-    cb.checked = checked[d.id] !== undefined ? checked[d.id] : d.online;
-    lab.appendChild(cb);
-    lab.appendChild(document.createTextNode(' ' + (d.label || d.id) + (d.online ? '' : ' (offline)')));
-    wrap.appendChild(lab);
-  });
+function startPipeline(pipelineId, deviceIds, params, labelText) {
+  if (!deviceIds.length) { logLine('Chưa chọn máy nào — sang tab 📱 Dàn máy tick chọn máy trước.', false); return; }
+  fetch('/api/pipeline/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipelineId: pipelineId, deviceIds: deviceIds, params: params || {} })
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) {
+      currentRunId = j.runId;
+      document.getElementById('pipeStop').disabled = false;
+      logLine((labelText || 'Pipeline') + ': đã bắt đầu (' + j.runId + ') cho ' + deviceIds.length + ' máy', true);
+      prevRunSnapshot = '';
+      refreshRuns();
+    } else {
+      logLine((labelText || 'Pipeline') + ': không bắt đầu được: ' + ((j && j.error) || '?'), false);
+    }
+  }).catch(function (e) { logLine('Lỗi bắt đầu pipeline: ' + e, false); });
 }
 function loadPipelines() {
   fetch('/api/pipelines').then(function (r) { return r.json(); }).then(function (j) {
@@ -507,31 +676,16 @@ function loadPipelines() {
   }).catch(function () {});
 }
 document.getElementById('pipeStart').onclick = function () {
-  var ids = [];
-  document.querySelectorAll('#pipeDevices input[type=checkbox]').forEach(function (c) { if (c.checked) ids.push(c.value); });
+  var ids = getSelectedIds();
   if (!ids.length) { document.getElementById('pipeMsg').textContent = 'Chưa chọn máy nào.'; return; }
   var params = {
     lineApkUrl: document.getElementById('lineUrl').value.trim(),
     tiktokApkUrl: document.getElementById('tiktokUrl').value.trim(),
     gameUrl: document.getElementById('gameUrl').value.trim(),
-    minutes: parseInt(document.getElementById('watchMinutes').value, 10) || 30
+    minutes: parseInt(document.getElementById('pipeMinutes').value, 10) || 30
   };
-  fetch('/api/pipeline/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pipelineId: document.getElementById('pipeSelect').value, deviceIds: ids, params: params })
-  }).then(function (r) { return r.json(); }).then(function (j) {
-    if (j && j.ok) {
-      currentRunId = j.runId;
-      document.getElementById('pipeStop').disabled = false;
-      document.getElementById('pipeMsg').textContent = 'Đã bắt đầu: ' + j.runId;
-      logLine('Pipeline bắt đầu (' + j.runId + ') cho ' + ids.length + ' máy', true);
-      prevRunSnapshot = '';
-      refreshRuns();
-    } else {
-      document.getElementById('pipeMsg').textContent = 'Lỗi: ' + ((j && j.error) || '?');
-      logLine('Pipeline không bắt đầu được: ' + ((j && j.error) || '?'), false);
-    }
-  });
+  document.getElementById('pipeMsg').textContent = '';
+  startPipeline(document.getElementById('pipeSelect').value, ids, params, 'Pipeline');
 };
 document.getElementById('pipeStop').onclick = function () {
   if (!currentRunId) return;
@@ -552,13 +706,6 @@ function stepIcon(s) {
   return '•';
 }
 function renderRuns(j) {
-  var waiting = 0;
-  (j.runs || []).forEach(function (r) {
-    r.devices.forEach(function (dr) { if (dr.status === 'waiting_manual') waiting++; });
-  });
-  document.getElementById('cManual').textContent = waiting;
-
-  // Ghi nhat ky khi trang thai thay doi
   var snap = JSON.stringify((j.runs || []).map(function (r) {
     return [r.id, r.devices.map(function (d) { return d.deviceId + ':' + d.status + ':' + d.currentStep; }).join(',')].join('|');
   }));
@@ -612,6 +759,127 @@ function refreshRuns() {
   }).catch(function () {});
 }
 
+// ---------- 4 the Tac vu ----------
+document.getElementById('taskGoogle').onclick = function () {
+  startPipeline('cap-gmail-tu-dong', getSelectedIds(), {}, 'Đăng nhập Google');
+};
+document.getElementById('taskTtLogin').onclick = function () {
+  startPipeline('dang-nhap-tiktok-lite', getSelectedIds(), {}, 'Đăng nhập TikTok Lite bằng TK trong kho');
+};
+function installTask(urlId, appName) {
+  var ids = getSelectedIds();
+  if (!ids.length) { logLine('Tải ' + appName + ': chưa chọn máy nào — sang tab 📱 Dàn máy tick chọn máy trước.', false); return; }
+  var url = document.getElementById(urlId).value.trim();
+  if (!url) { logLine('Tải ' + appName + ': chưa nhập URL APK — dán link APK vào ô trước.', false); return; }
+  ids.forEach(function (id) { sendCmd(id, nameOfDevice(id), 'install_url', { url: url }); });
+}
+document.getElementById('taskLine').onclick = function () { installTask('taskLineUrl', 'LINE'); };
+document.getElementById('taskTiktok').onclick = function () { installTask('taskTiktokUrl', 'TikTok Lite'); };
+
+// ---------- Hanh dong: diem danh / xem video / check heo ----------
+document.getElementById('btnDiemDanh').onclick = function () {
+  startPipeline('diem-danh', getSelectedIds(), {}, 'Điểm danh 14 ngày');
+};
+function startWatchFor(ids, opts, labelText) {
+  if (!ids.length) { hdLogLine(labelText + ': chưa chọn máy nào — sang tab 📱 Dàn máy tick chọn máy trước.', false); return; }
+  fetch('/api/watch/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceIds: ids, minutes: opts.minutes, gameUrl: opts.gameUrl || '', detect: opts.detect })
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    (j.results || []).forEach(function (res) {
+      if (res.ok) hdLogLine(nameOfDevice(res.deviceId) + ': ' + labelText + ' đã chạy (' + opts.minutes + ' phút)', true);
+      else hdLogLine(nameOfDevice(res.deviceId) + ': không bật được ' + labelText + ' (' + ((res.error) || (res.watch && res.watch.note) || '?') + ')', false);
+    });
+    refreshDevices();
+  }).catch(function (e) { hdLogLine(labelText + ': lỗi (' + e + ')', false); });
+}
+function stopWatchFor(labelText) {
+  fetch('/api/watch/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      hdLogLine('Đã dừng mọi vòng xem (' + labelText + ')', j && j.ok);
+      refreshDevices();
+    });
+}
+document.getElementById('btnVideoStart').onclick = function () {
+  startWatchFor(getSelectedIds(), {
+    minutes: parseInt(document.getElementById('videoMinutes').value, 10) || 30,
+    gameUrl: document.getElementById('videoGameUrl').value.trim(),
+    detect: false
+  }, 'Tự động xem video');
+};
+document.getElementById('btnVideoStop').onclick = function () { stopWatchFor('xem video'); };
+document.getElementById('btnHeoStart').onclick = function () {
+  var url = document.getElementById('heoGameUrl').value.trim();
+  if (!url) {
+    hdLogLine('🐷 Check heo: CHƯA CÓ LINK GAME CHUYÊN DỤNG — dán link game chuyên dụng (hoặc nội dung mã QR) vào ô “Link game chuyên dụng” trước. Nik phải mở link này để xem thì bên này ăn mới báo thành công.', false);
+    alert('Check heo cần LINK GAME CHUYÊN DỤNG: dán link (hoặc nội dung mã QR) vào ô “Link game chuyên dụng (hoặc nội dung mã QR)” trước khi chạy.');
+    return;
+  }
+  saveGameLink(url);
+  startWatchFor(getSelectedIds(), {
+    minutes: parseInt(document.getElementById('watchMinutes').value, 10) || 30,
+    gameUrl: url,
+    detect: true
+  }, 'Check heo');
+};
+document.getElementById('btnHeoStop').onclick = function () { stopWatchFor('check heo'); };
+
+// ---------- Link game chuyen dung (luu tren server) ----------
+function saveGameLink(url) {
+  fetch('/api/game-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url }) })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) hdLogLine('Đã lưu link game chuyên dụng trên server — lần sau mở dashboard là có sẵn.', true);
+    }).catch(function () {});
+}
+function loadGameLink() {
+  fetch('/api/game-link').then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok && j.url) {
+      document.getElementById('heoGameUrl').value = j.url;
+      document.getElementById('videoGameUrl').value = j.url;
+      document.getElementById('gameUrl').value = j.url;
+    }
+  }).catch(function () {});
+}
+document.getElementById('heoGameUrl').addEventListener('change', function () {
+  var url = this.value.trim();
+  if (url) saveGameLink(url);
+});
+
+// ---------- Tien do diem danh ----------
+function refreshCheckin() {
+  fetch('/api/checkin').then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !j.ok) return;
+    var wrap = document.getElementById('checkinList');
+    wrap.innerHTML = '';
+    if (!(j.devices || []).length) {
+      wrap.appendChild(el('span', 'small', 'Chưa có máy nào điểm danh.'));
+      return;
+    }
+    j.devices.forEach(function (c) {
+      var row = el('div', 'ckrow');
+      row.appendChild(el('b', '', '📱 ' + c.label));
+      var prog = el('div', 'prog');
+      var fill = document.createElement('div');
+      fill.style.width = Math.min(100, Math.round(c.count / 14 * 100)) + '%';
+      prog.appendChild(fill);
+      row.appendChild(prog);
+      row.appendChild(el('span', '', 'Ngày ' + c.count + '/14'));
+      row.appendChild(el('span', 'badge ' + (c.todayDone ? 'b-checkin' : 'b-no'), c.todayDone ? 'Hôm nay ✔' : 'Hôm nay chưa'));
+      if (c.complete) row.appendChild(el('span', 'badge b-checkin', '🎉 ĐỦ 14 NGÀY'));
+      row.appendChild(mkBtn('Bắt đầu chu kỳ mới', function () {
+        if (!confirm('Xoá tiến độ điểm danh của ' + c.label + ' và bắt đầu chu kỳ 14 ngày mới?')) return;
+        fetch('/api/checkin/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: c.deviceId }) })
+          .then(function (r) { return r.json(); }).then(function (x) {
+            hdLogLine(c.label + ': đã bắt đầu chu kỳ điểm danh mới', x && x.ok);
+            refreshCheckin();
+            refreshDevices();
+          });
+      }, 'ghost'));
+      wrap.appendChild(row);
+    });
+  }).catch(function () {});
+}
+
 // ---------- QR ghi danh ----------
 var qrText = '';
 document.getElementById('qrLoad').onclick = function () {
@@ -635,20 +903,31 @@ document.getElementById('qrCopy').onclick = function () {
   }
 };
 
-// ---------- Su kien tu server (check-in, vong xem game) ----------
+// ---------- Su kien tu server ----------
 var lastEventId = 0;
 function refreshEvents() {
   fetch('/api/events?since=' + lastEventId).then(function (r) { return r.json(); }).then(function (j) {
     if (!j || !j.ok) return;
     document.getElementById('cCheckin').textContent = j.checkinSuccess || 0;
+    document.getElementById('hdCheckinCount').textContent = j.checkinSuccess || 0;
     (j.events || []).forEach(function (ev) {
       if (ev.id > lastEventId) lastEventId = ev.id;
       var who = ev.label || ev.deviceId || 'Server';
-      if (ev.type === 'checkin_success') logLine('🎉 ' + who + ' — ' + ev.message, 'checkin');
-      else if (ev.type === 'watch_start') logLine('🐷 ' + who + ' — ' + ev.message, null);
-      else if (ev.type === 'watch_stop') logLine('🐷 ' + who + ' — ' + ev.message, null);
-      else if (ev.type === 'watch_error') logLine('🐷 ' + who + ' — ' + ev.message, false);
-      else logLine(who + ' — ' + ev.message, null);
+      if (ev.type === 'checkin_success') {
+        logLine('🎉 ' + who + ' — ' + ev.message, 'checkin');
+        hdLogLine('🎉 ' + who + ' — ' + ev.message, 'checkin');
+      } else if (ev.type === 'watch_start' || ev.type === 'watch_stop') {
+        logLine('🐷 ' + who + ' — ' + ev.message, null);
+        hdLogLine('🐷 ' + who + ' — ' + ev.message, null);
+      } else if (ev.type === 'watch_error') {
+        logLine('🐷 ' + who + ' — ' + ev.message, false);
+        hdLogLine('🐷 ' + who + ' — ' + ev.message, false);
+      } else if (ev.type === 'checkin_day' || ev.type === 'tiktok_login') {
+        logLine(who + ' — ' + ev.message, null);
+        hdLogLine(who + ' — ' + ev.message, null);
+      } else {
+        logLine(who + ' — ' + ev.message, null);
+      }
     });
     if (j.lastEventId && j.lastEventId > lastEventId) lastEventId = j.lastEventId;
   }).catch(function () {});
@@ -672,12 +951,15 @@ function refreshDevices() {
 }
 refreshInfo();
 refreshDevices();
-refreshGmail();
+refreshPools();
 loadPipelines();
+loadGameLink();
 refreshRuns();
 refreshEvents();
-setInterval(function () { refreshDevices(); refreshGmail(); refreshRuns(); refreshEvents(); }, 3000);
-logLine('Dashboard Giai đoạn 3.1 đã mở. Đang chờ máy kết nối...', null);
+refreshCheckin();
+setInterval(function () { refreshDevices(); refreshPools(); refreshRuns(); refreshEvents(); refreshCheckin(); }, 3000);
+logLine('Dashboard Giai đoạn 3.2 đã mở. Đang chờ máy kết nối...', null);
+hdLogLine('Sẵn sàng: Điểm danh 14 ngày · Tự động xem video · Check heo (cần link game chuyên dụng).', null);
 </script>
 </body>
 </html>

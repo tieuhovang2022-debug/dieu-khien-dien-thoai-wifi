@@ -15,6 +15,10 @@ Hệ thống điều khiển dàn điện thoại Android qua WiFi, kiểu MobiG
 - **Kho Gmail + cấp máy tự động**: nhập kho Gmail (mật khẩu luôn hiển thị dạng che trên dashboard); bấm "Cấp Gmail" là điện thoại **tự mở màn hình đăng nhập Google, tự nhập Gmail, tự nhập mật khẩu và đăng nhập** — chỉ dừng ở bước **"Chờ chạm tay"** khi Google bắt xác minh số điện thoại / CAPTCHA.
 - **Đăng ký TikTok Lite bán tự động**: tự bấm qua các màn hình mở đầu theo danh sách mốc chữ trong `server/data/flow-config.json`, dừng chờ chạm tay ở bước nhập số điện thoại/email + mã xác minh.
 - **Quét game + xem video heo**: tự lướt video theo vòng lặp, đọc màn hình liên tục; khi thấy mốc chữ check-in thành công (trong `flow-config.json`) thì báo sự kiện về dashboard và dừng vòng lặp của máy đó.
+- **Kho tài khoản xem heo + đăng nhập TikTok Lite tự động** (3.2): kho tài khoản TikTok Lite chưa đăng nhập (mật khẩu luôn che); flow tự cấp tài khoản từ kho, mở TikTok Lite, tự nhập tài khoản + mật khẩu và đăng nhập — dừng "Chờ chạm tay" khi TikTok bắt xác minh.
+- **Điểm danh 14 ngày** (3.2): flow tự vào mục điểm danh và bấm điểm danh mỗi ngày, server lưu tiến độ theo từng máy (`data/checkin-state.json`, ngày theo giờ Tokyo), chạy lại cùng ngày không tính trùng.
+- **Check heo** (3.2): việc hằng ngày của máy đã quét ăn game — máy mở **link game chuyên dụng** (bắt buộc; lưu trên server ở `data/game-link.json` qua `/api/game-link`, khỏi dán lại mỗi ngày) rồi tự xem video; thấy chữ check-in/thưởng thành công thì báo về và dừng, để Nik mời nhận thêm tiền thưởng. Riêng "Tự động xem video" là vòng xem thường, không quét thành công.
+- **Dashboard 4 tab** (3.2): 📱 Dàn máy (mặc định) · 🗄 Kho dữ liệu · ⚙ Tác vụ · ▶ Hành động, tông tím; agent giữ nguyên v3.1.
 
 ## Hiệu chỉnh sau khi test máy thật
 
@@ -22,7 +26,7 @@ Các mốc chữ nhận diện giao diện TikTok Lite nằm trong `server/data/
 
 ## Trạng thái kiểm chứng
 
-- Giai đoạn 1+2+3+3.1 đã kiểm chứng vòng kín bằng agent giả lập: 38/38 (giai đoạn 2), 41/41 (giai đoạn 3) và 29/29 (giai đoạn 3.1 — cấp Gmail tự đăng nhập) mục đều đạt — chi tiết trong `VERIFY.md`, script kiểm chứng: `verify-stage2.js`, `verify-stage3.js`, `verify-stage31.js`.
+- Giai đoạn 1+2+3+3.1+3.2 đã kiểm chứng vòng kín bằng agent giả lập: 38/38 (giai đoạn 2), 41/41 (giai đoạn 3), 29/29 (giai đoạn 3.1 — cấp Gmail tự đăng nhập) và 54/54 (giai đoạn 3.2 — kho heo, đăng nhập TikTok Lite, điểm danh, check heo) mục đều đạt, các bộ cũ chạy lại vẫn đạt — chi tiết trong `VERIFY.md`, script kiểm chứng: `verify-stage2.js`, `verify-stage3.js`, `verify-stage31.js`, `verify-stage32.js`.
 - **Chưa chạy trên điện thoại thật.** Bước tiếp theo: cài lên 1 máy test, hiệu chỉnh dần theo kết quả thực tế.
 
 ## Không có trong repo này

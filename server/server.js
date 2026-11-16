@@ -1,4 +1,4 @@
-// Farm Control - Server Giai đoạn 3.1
+// Farm Control - Server Giai đoạn 3.2
 // TCP 8787: agent ket noi (JSON theo dong). HTTP 8080: dashboard + API.
 // Chi dung module co san cua Node (net/http/fs/path/os/crypto). Khong can npm install.
 //
@@ -34,6 +34,21 @@
 //   nay (van giu nguyen dang response cu).
 // - AN TOAN: mat khau that CHI di qua kenh lenh TCP toi agent; moi log /
 //   su kien / response API deu chi hien "********".
+//
+// Giai doan 3.2 them:
+// - Kho tai khoan XEM HEO chua dang nhap (data/heo-pool.json) — API
+//   /api/heo giong het kho Gmail: import (username|mat khau), assign-next,
+//   mark-die, delete; mat khau LUON che qua API, chi di qua kenh agent.
+// - Flow "dang-nhap-tiktok-lite": cap tai khoan heo tu kho roi TU dang
+//   nhap TikTok Lite (mo app -> bam nut dang nhap -> nhap username -> nhap
+//   mat khau -> bam dang nhap) theo dau chu trong muc "tiktokLogin" cua
+//   flow-config.json; gap xac minh (CAPTCHA/ma) thi dung Cho cham tay.
+// - Flow "diem-danh" (diem danh 14 ngay): mo TikTok Lite, vao muc diem
+//   danh theo dau chu muc "checkin" cua flow-config, bam nut diem danh,
+//   thay chu thanh cong thi ghi ngay hom nay (Asia/Tokyo) vao
+//   data/checkin-state.json. API GET /api/checkin + POST /api/checkin/reset.
+// - Dashboard viet lai: 4 tab (Dan may / Kho du lieu / Tac vu / Hanh dong),
+//   tong tim. Agent KHONG doi (van v3.1).
 'use strict';
 const net = require('net');
 const http = require('http');
@@ -48,6 +63,9 @@ const CMD_TIMEOUT_MS = 30 * 1000;
 const APK_DIR = path.join(__dirname, 'public-apks');
 const DATA_DIR = path.join(__dirname, 'data');
 const POOL_FILE = path.join(DATA_DIR, 'gmail-pool.json');
+const HEO_FILE = path.join(DATA_DIR, 'heo-pool.json');
+const CHECKIN_FILE = path.join(DATA_DIR, 'checkin-state.json');
+const GAME_LINK_FILE = path.join(DATA_DIR, 'game-link.json');
 const PROVISION_FILE = path.join(__dirname, 'provisioning.json');
 
 const devices = new Map(); // androidId -> device object
@@ -72,6 +90,13 @@ function publicDevice(d) {
     agentVersion: d.agentVersion || '',
     deviceOwner: !!d.deviceOwner,
     accessibility: !!d.accessibility,
+    gmailAssigned: (typeof pool !== 'undefined')
+      ? ((pool.accounts.find((a) => a.status === 'assigned' && a.deviceId === d.id) || {}).email || null)
+      : null,
+    heoAssigned: (typeof heoPool !== 'undefined')
+      ? ((heoPool.accounts.find((a) => a.status === 'assigned' && a.deviceId === d.id) || {}).username || null)
+      : null,
+    checkin: (typeof checkinState !== 'undefined') ? publicCheckin(d.id) : null,
     watch: (typeof watches !== 'undefined' && watches.has(d.id)) ? publicWatch(watches.get(d.id)) : null
   };
 }
@@ -320,6 +345,198 @@ function findAccountForDevice(deviceId) {
   return pool.accounts.find((x) => x.status === 'assigned' && x.deviceId === deviceId) || null;
 }
 
+// ================= Kho tai khoan XEM HEO chua dang nhap (Giai doan 3.2) =================
+// File data/heo-pool.json: { accounts: [{id, username, password, status,
+// deviceId, assignedAt, loggedInAt, createdAt}] }
+// status: ready | assigned | die
+// Day la cac tai khoan TikTok Lite dung de xem heo, CHUA dang nhap vao may
+// nao. Flow "dang-nhap-tiktok-lite" cap tai khoan tu kho nay roi tu dang
+// nhap vao may. QUY TAC AN TOAN giong kho Gmail: password KHONG bao gio
+// tra ve qua API/dashboard — chi gui thang qua kenh lenh TCP toi agent.
+let heoPool = { accounts: [] };
+let heoCounter = 0;
+
+function loadHeoPool() {
+  try {
+    const raw = fs.readFileSync(HEO_FILE, 'utf8');
+    const j = JSON.parse(raw);
+    if (j && Array.isArray(j.accounts)) heoPool = j;
+  } catch (e) {
+    heoPool = { accounts: [] };
+  }
+  heoCounter = heoPool.accounts.length;
+}
+function saveHeoPool() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(HEO_FILE, JSON.stringify(heoPool, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[heo] khong ghi duoc pool:', e.message);
+  }
+}
+loadHeoPool();
+if (!fs.existsSync(HEO_FILE)) saveHeoPool(); // tu tao file rong lan dau
+
+function publicHeoAccount(a) {
+  return {
+    id: a.id,
+    username: a.username,
+    passwordMasked: '********',
+    status: a.status,
+    deviceId: a.deviceId || null,
+    assignedAt: a.assignedAt || null,
+    loggedInAt: a.loggedInAt || null,
+    createdAt: a.createdAt || null
+  };
+}
+
+function parseHeoImportLines(text) {
+  const out = [];
+  const lines = String(text || '').split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    let sep = -1;
+    if (line.indexOf('|') >= 0) sep = line.indexOf('|');
+    else if (line.indexOf(':') >= 0) sep = line.indexOf(':');
+    else if (/\s/.test(line)) sep = line.search(/\s/);
+    if (sep < 0) continue;
+    const username = line.slice(0, sep).trim();
+    const password = line.slice(sep + 1).trim().replace(/^\s+/, '');
+    if (!username || !password) continue;
+    out.push({ username: username, password: password });
+  }
+  return out;
+}
+
+function importHeoAccounts(text) {
+  const parsed = parseHeoImportLines(text);
+  let added = 0, skipped = 0;
+  for (const p of parsed) {
+    if (heoPool.accounts.some((a) => a.username.toLowerCase() === p.username.toLowerCase())) { skipped++; continue; }
+    heoPool.accounts.push({
+      id: 'h' + (++heoCounter) + '-' + Date.now().toString(36),
+      username: p.username,
+      password: p.password,
+      status: 'ready',
+      deviceId: null,
+      assignedAt: null,
+      loggedInAt: null,
+      createdAt: nowIso()
+    });
+    added++;
+  }
+  if (added > 0) saveHeoPool();
+  return { added: added, skipped: skipped, total: heoPool.accounts.length };
+}
+
+/** Cap tai khoan heo ready tiep theo cho mot may. Tra {account} hoac {error}. */
+function assignHeo(deviceId) {
+  const a = heoPool.accounts.find((x) => x.status === 'ready');
+  if (!a) return { error: 'pool_empty' };
+  a.status = 'assigned';
+  a.deviceId = deviceId;
+  a.assignedAt = nowIso();
+  saveHeoPool();
+  return { account: a };
+}
+
+function findHeoForDevice(deviceId) {
+  return heoPool.accounts.find((x) => x.status === 'assigned' && x.deviceId === deviceId) || null;
+}
+
+// ================= Trang thai DIEM DANH 14 NGAY (Giai doan 3.2) =================
+// File data/checkin-state.json: { <deviceId>: { dates: ['yyyy-mm-dd', ...],
+// cycleStart: 'yyyy-mm-dd' } } — ngay tinh theo gio Asia/Tokyo.
+// Du 14 ngay khac nhau trong dates = hoan thanh 1 chu ky diem danh.
+let checkinState = {};
+
+function loadCheckinState() {
+  try {
+    const raw = fs.readFileSync(CHECKIN_FILE, 'utf8');
+    const j = JSON.parse(raw);
+    if (j && typeof j === 'object' && !Array.isArray(j)) checkinState = j;
+  } catch (e) {
+    checkinState = {};
+  }
+}
+function saveCheckinState() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(CHECKIN_FILE, JSON.stringify(checkinState, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[checkin] khong ghi duoc state:', e.message);
+  }
+}
+loadCheckinState();
+if (!fs.existsSync(CHECKIN_FILE)) saveCheckinState(); // tu tao file rong lan dau
+
+/** Ngay hom nay theo gio Tokyo, dinh dang yyyy-mm-dd. */
+function todayTokyo() {
+  try {
+    const s = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  } catch (e) { /* roi xuong cach thu cong */ }
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function getCheckinState(deviceId) {
+  const st = checkinState[deviceId];
+  if (st && Array.isArray(st.dates)) return st;
+  return { dates: [], cycleStart: null };
+}
+
+function publicCheckin(deviceId) {
+  const st = getCheckinState(deviceId);
+  const today = todayTokyo();
+  return {
+    count: st.dates.length,
+    dates: st.dates.slice(),
+    todayDone: st.dates.indexOf(today) >= 0,
+    complete: st.dates.length >= 14,
+    cycleStart: st.cycleStart || null
+  };
+}
+
+/** Ghi nhan diem danh hom nay cho may (neu chua ghi). Tra publicCheckin. */
+function recordCheckin(deviceId) {
+  const today = todayTokyo();
+  let st = checkinState[deviceId];
+  if (!st || !Array.isArray(st.dates)) {
+    st = { dates: [], cycleStart: today };
+    checkinState[deviceId] = st;
+  }
+  if (!st.cycleStart) st.cycleStart = st.dates.length ? st.dates[0] : today;
+  if (st.dates.indexOf(today) < 0) {
+    st.dates.push(today);
+    st.dates.sort();
+    saveCheckinState();
+  }
+  return publicCheckin(deviceId);
+}
+
+// ================= Link game chuyen dung (Giai doan 3.2) =================
+// File data/game-link.json: { url, updatedAt } — link game chuyen dung
+// (hoac noi dung ma QR) ma cac Nik xem heo PHAI mo de xem thi ben Link
+// moi duoc ghi nhan thanh cong. Luu server-side de khoi dan lai moi
+// ngay; dashboard tu tai + tu luu qua /api/game-link.
+let gameLink = { url: '', updatedAt: null };
+function loadGameLink() {
+  try {
+    const j = JSON.parse(fs.readFileSync(GAME_LINK_FILE, 'utf8'));
+    if (j && typeof j.url === 'string') gameLink = { url: j.url, updatedAt: j.updatedAt || null };
+  } catch (e) { /* chua co file — giu rong */ }
+}
+function saveGameLink() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(GAME_LINK_FILE, JSON.stringify(gameLink, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[game-link] khong ghi duoc file:', e.message);
+  }
+}
+loadGameLink();
+
 // ================= Cau hinh flow (Giai doan 3) =================
 // File data/flow-config.json — nguoi dung tu sua duoc:
 //   onboardingMarkers: cac chu (tieng Nhat) co the xuat hien o man hinh chao /
@@ -347,6 +564,28 @@ const FLOW_DEFAULTS = {
     passwordScreen: ['パスワード', 'Password'],
     agreeButton: ['同意します', 'I agree'],
     verifyMarkers: ['本人確認', '確認コード', 'セキュリティコード', '電話番号を入力', 'ロボットではありません', '2段階認証']
+  },
+  // Giai doan 3.2: dau chu nhan dien man hinh DANG NHAP TIKTOK LITE cho
+  // flow "dang-nhap-tiktok-lite" — loginEntry (nut vao dang nhap),
+  // usernameScreen (man hinh nhap username/email), passwordScreen (man
+  // hinh nhap mat khau), loginButton (nut dang nhap / tiep theo),
+  // verifyMarkers (chu bao TikTok bat XAC MINH: ma xac nhan / CAPTCHA —
+  // thay la dung Cho cham tay). Mac dinh tieng Nhat truoc, can hieu chuan.
+  tiktokLogin: {
+    loginEntry: ['ログイン', 'ログインする', 'Log in'],
+    usernameScreen: ['ユーザー名', 'メールアドレス', '電話番号', 'Username', 'Email or phone'],
+    passwordScreen: ['パスワード', 'Password'],
+    loginButton: ['ログイン', 'Log in', '次へ', 'Next'],
+    verifyMarkers: ['本人確認', '確認コード', '認証コード', 'セキュリティコード', '電話番号を入力', 'ロボットではありません']
+  },
+  // Giai doan 3.2: dau chu cho flow "diem-danh" — entryMarkers (muc diem
+  // danh / bonus tren man hinh), buttonMarkers (nut bam diem danh),
+  // successMarkers (chu bao diem danh thanh cong — mac dinh giong
+  // checkinSuccessMarkers).
+  checkin: {
+    entryMarkers: ['チェックイン', 'ボーナス', 'ポイント'],
+    buttonMarkers: ['チェックインする', 'チェックイン'],
+    successMarkers: ['チェックイン完了', 'チェックイン成功', 'ポイントを獲得しました', '付与されました']
   }
 };
 
@@ -368,6 +607,28 @@ function sanitizeSignin(v) {
   };
 }
 
+function sanitizeTiktokLogin(v) {
+  const d = FLOW_DEFAULTS.tiktokLogin;
+  const s = (v && typeof v === 'object') ? v : {};
+  return {
+    loginEntry: sanitizeMarkers(s.loginEntry, d.loginEntry),
+    usernameScreen: sanitizeMarkers(s.usernameScreen, d.usernameScreen),
+    passwordScreen: sanitizeMarkers(s.passwordScreen, d.passwordScreen),
+    loginButton: sanitizeMarkers(s.loginButton, d.loginButton),
+    verifyMarkers: sanitizeMarkers(s.verifyMarkers, d.verifyMarkers)
+  };
+}
+
+function sanitizeCheckin(v) {
+  const d = FLOW_DEFAULTS.checkin;
+  const s = (v && typeof v === 'object') ? v : {};
+  return {
+    entryMarkers: sanitizeMarkers(s.entryMarkers, d.entryMarkers),
+    buttonMarkers: sanitizeMarkers(s.buttonMarkers, d.buttonMarkers),
+    successMarkers: sanitizeMarkers(s.successMarkers, d.successMarkers)
+  };
+}
+
 function loadFlowConfig() {
   try {
     const raw = fs.readFileSync(FLOW_CONFIG_FILE, 'utf8');
@@ -376,13 +637,17 @@ function loadFlowConfig() {
     return {
       onboardingMarkers: sanitizeMarkers(j.onboardingMarkers, FLOW_DEFAULTS.onboardingMarkers),
       checkinSuccessMarkers: sanitizeMarkers(j.checkinSuccessMarkers, FLOW_DEFAULTS.checkinSuccessMarkers),
-      signin: sanitizeSignin(j.signin)
+      signin: sanitizeSignin(j.signin),
+      tiktokLogin: sanitizeTiktokLogin(j.tiktokLogin),
+      checkin: sanitizeCheckin(j.checkin)
     };
   } catch (e) {
     return {
       onboardingMarkers: FLOW_DEFAULTS.onboardingMarkers.slice(),
       checkinSuccessMarkers: FLOW_DEFAULTS.checkinSuccessMarkers.slice(),
-      signin: sanitizeSignin(null)
+      signin: sanitizeSignin(null),
+      tiktokLogin: sanitizeTiktokLogin(null),
+      checkin: sanitizeCheckin(null)
     };
   }
 }
@@ -668,6 +933,239 @@ async function gmailSigninSequence(deviceId, acct, hooks) {
   }
 }
 
+// ================= Trinh tu DANG NHAP TIKTOK LITE TU DONG (Giai doan 3.2) =================
+// Dung cho flow "dang-nhap-tiktok-lite": mo TikTok Lite -> tim nut dang
+// nhap (loginEntry) -> cham vao -> cho man hinh nhap username -> cham o
+// EditText + nhap username -> bam nut dang nhap/tiep theo -> cho man hinh
+// mat khau -> cham o EditText + nhap mat khau -> bam dang nhap -> quet
+// lai: con chu XAC MINH thi dung Cho cham tay, khong con dau chu man
+// hinh dang nhap thi xong (ghi loggedInAt cho tai khoan trong kho heo).
+// Cung mau voi gmailSigninSequence: poll dump_ui moi ~1,5s, timeout ~25s,
+// su kien tung tieu buoc (type "tiktok_login"), mat khau luon "********"
+// trong log — mat khau that CHI di qua lenh input_text tren kenh agent.
+const TT_VERIFY_NOTE = 'Máy đang ở bước xác minh của TikTok — xử lý chạm tay trên máy rồi bấm Chạy tiếp';
+
+async function tiktokLoginSequence(deviceId, acct, hooks) {
+  hooks = hooks || {};
+  const log = (msg) => {
+    addEvent('tiktok_login', deviceId, msg);
+    if (hooks.log) hooks.log(msg);
+  };
+  const cfg = loadFlowConfig().tiktokLogin;
+  const out = { outcome: 'error', note: '', usernameTyped: false, passwordTyped: false };
+  let res = null;
+
+  // Buoc 1: mo TikTok Lite
+  try {
+    res = await sendCommand(deviceId, 'open_app', { 'package': TIKTOK_PKG }, CMD_TIMEOUT_MS);
+  } catch (e) {
+    out.note = 'Không gửi được lệnh mở TikTok Lite: ' + (e && e.message || e);
+    return out;
+  }
+  if (!res || !res.ok) {
+    out.note = 'Không mở được TikTok Lite: ' + ((res && res.error) || 'unknown') +
+      ((res && res.error === 'app_not_installed') ? ' (máy chưa cài TikTok Lite — chạy tác vụ Tải TikTok Lite trước)' : '');
+    return out;
+  }
+  log('Đăng nhập TikTok Lite: đã mở app, tìm màn hình đăng nhập...');
+  await sleepMs(3000);
+
+  // Buoc 2: dieu huong toi man hinh nhap username — thay nut dang nhap
+  // thi bam vao roi quet tiep; thay chu XAC MINH thi dung Cho cham tay.
+  let userDump = null;
+  let entryTaps = 0;
+  while (!userDump) {
+    const r = await pollDumpUntil(deviceId, (nodes) => {
+      if (dumpHasAny(nodes, cfg.verifyMarkers)) return 'verify';
+      if (dumpHasAny(nodes, cfg.usernameScreen) || firstEditText(nodes)) return 'username';
+      if (dumpHasAny(nodes, cfg.loginEntry)) return 'entry';
+      return null;
+    }, 25000);
+    if (!r) {
+      out.note = 'Không thấy màn hình đăng nhập TikTok Lite sau 25 giây (kiểm tra máy / dấu chữ tiktokLogin trong flow-config.json)';
+      return out;
+    }
+    if (r.hit === 'username') { userDump = r; break; }
+    if (r.hit === 'entry') {
+      if (++entryTaps > 3) {
+        out.note = 'Đã bấm nút đăng nhập nhiều lần nhưng chưa thấy màn hình nhập tài khoản';
+        return out;
+      }
+      const t = await tapFirstMarker(deviceId, cfg.loginEntry);
+      if (!t) {
+        out.note = 'Không bấm được nút đăng nhập của TikTok Lite';
+        return out;
+      }
+      log('Đã bấm "' + t + '", chờ màn hình nhập tài khoản...');
+      await sleepMs(1500);
+      continue;
+    }
+    // r.hit === 'verify'
+    log('TikTok yêu cầu xác minh — dừng chờ chạm tay');
+    if (!hooks.park) { out.outcome = 'verify'; out.note = TT_VERIFY_NOTE; return out; }
+    const how = await hooks.park(TT_VERIFY_NOTE);
+    if (how === 'stopped') { out.outcome = 'stopped'; return out; }
+  }
+
+  // Buoc 3: cham o nhap + nhap username
+  if (!await tapFirstEditText(deviceId, userDump.nodes)) {
+    out.note = 'Không chạm được ô nhập tài khoản trên màn hình đăng nhập TikTok Lite';
+    return out;
+  }
+  await sleepMs(400);
+  try {
+    res = await sendCommand(deviceId, 'input_text', { text: acct.username }, CMD_TIMEOUT_MS);
+  } catch (e) {
+    out.note = 'Không nhập được tài khoản: ' + (e && e.message || e);
+    return out;
+  }
+  if (!res || !res.ok) {
+    out.note = 'Không nhập được tài khoản: ' + ((res && res.error) || 'unknown');
+    return out;
+  }
+  out.usernameTyped = true;
+  log('Đã nhập tài khoản ' + acct.username);
+
+  // Buoc 4: bam nut dang nhap / tiep theo
+  const lb1 = await tapFirstMarker(deviceId, cfg.loginButton);
+  if (!lb1) {
+    out.note = 'Không thấy nút đăng nhập/Tiếp theo ở màn hình nhập tài khoản';
+    return out;
+  }
+  log('Đã bấm "' + lb1 + '", chờ màn hình nhập mật khẩu...');
+
+  // Buoc 5: cho man hinh mat khau — hoac man hinh XAC MINH (Cho cham tay)
+  let pwDump = null;
+  let resumed5 = false;
+  while (!pwDump) {
+    const r = await pollDumpUntil(deviceId, (nodes) => {
+      if (dumpHasAny(nodes, cfg.verifyMarkers)) return 'verify';
+      if (dumpHasAny(nodes, cfg.passwordScreen) || firstEditText(nodes)) return 'password';
+      return null;
+    }, 25000);
+    if (r && r.hit === 'password') { pwDump = r; break; }
+    if (r && r.hit === 'verify') {
+      log('TikTok yêu cầu xác minh — dừng chờ chạm tay');
+      if (!hooks.park) { out.outcome = 'verify'; out.note = TT_VERIFY_NOTE; return out; }
+      const how = await hooks.park(TT_VERIFY_NOTE);
+      if (how === 'stopped') { out.outcome = 'stopped'; return out; }
+      resumed5 = true;
+      continue;
+    }
+    if (resumed5) break; // nguoi dung da xu ly tay xong -> sang kiem tra cuoi
+    out.note = 'Không thấy màn hình nhập mật khẩu sau 25 giây';
+    return out;
+  }
+
+  if (pwDump) {
+    // Buoc 6: cham o mat khau + nhap mat khau (CHI qua kenh agent)
+    if (!await tapFirstEditText(deviceId, pwDump.nodes)) {
+      out.note = 'Không chạm được ô nhập mật khẩu';
+      return out;
+    }
+    await sleepMs(400);
+    try {
+      res = await sendCommand(deviceId, 'input_text', { text: acct.password }, CMD_TIMEOUT_MS);
+    } catch (e) {
+      out.note = 'Không nhập được mật khẩu: ' + (e && e.message || e);
+      return out;
+    }
+    if (!res || !res.ok) {
+      out.note = 'Không nhập được mật khẩu: ' + ((res && res.error) || 'unknown');
+      return out;
+    }
+    out.passwordTyped = true;
+    log('Đã nhập mật khẩu ********');
+
+    // Buoc 7: bam nut dang nhap
+    const lb2 = await tapFirstMarker(deviceId, cfg.loginButton);
+    if (!lb2) {
+      out.note = 'Không thấy nút đăng nhập ở màn hình nhập mật khẩu';
+      return out;
+    }
+    log('Đã bấm "' + lb2 + '", chờ TikTok xử lý...');
+  }
+
+  // Buoc 8: kiem tra cuoi — con chu xac minh thi Cho cham tay (Resume
+  // thi quet lai); het dau chu man hinh dang nhap thi xong; van con o
+  // man hinh nhap username/mat khau sau ~8 giay thi bao chua xong.
+  while (true) {
+    let sawVerify = false;
+    let sawLoginScreen = true;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 8000) {
+      const nodes = await dumpUiNodes(deviceId);
+      if (nodes) {
+        if (dumpHasAny(nodes, cfg.verifyMarkers)) { sawVerify = true; break; }
+        sawLoginScreen = !!(dumpHasAny(nodes, cfg.usernameScreen) || dumpHasAny(nodes, cfg.passwordScreen));
+        if (!sawLoginScreen) break;
+      }
+      await sleepMs(1200);
+    }
+    if (sawVerify) {
+      log('TikTok vẫn yêu cầu xác minh — dừng chờ chạm tay');
+      if (!hooks.park) { out.outcome = 'verify'; out.note = TT_VERIFY_NOTE; return out; }
+      const how = await hooks.park(TT_VERIFY_NOTE);
+      if (how === 'stopped') { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    if (sawLoginScreen) {
+      out.note = 'Vẫn ở màn hình đăng nhập TikTok Lite sau khi nhập mật khẩu (sai tài khoản/mật khẩu, hoặc app cần thêm bước nữa)';
+      return out;
+    }
+    acct.loggedInAt = nowIso();
+    saveHeoPool();
+    out.outcome = 'done';
+    log('✅ Đăng nhập TikTok Lite hoàn tất: ' + acct.username);
+    return out;
+  }
+}
+
+// ================= Trinh tu DIEM DANH (Giai doan 3.2) =================
+// Mo san TikTok Lite (buoc pipeline truoc do) -> quet dump_ui tim muc
+// diem danh: thay chu thanh cong thi xong ngay; thay nut diem danh thi
+// bam; thay muc diem danh (entry) thi bam vao roi tim nut. Thay chu
+// thanh cong (muc "checkin" cua flow-config) -> tra outcome 'success'
+// de buoc pipeline ghi nhan ngay hom nay vao checkin-state.json.
+async function checkinSequence(deviceId, hooks) {
+  hooks = hooks || {};
+  const log = (msg) => {
+    addEvent('checkin_day', deviceId, msg);
+    if (hooks.log) hooks.log(msg);
+  };
+  const cfg = loadFlowConfig().checkin;
+  const scan = (wantButton) => (nodes) => {
+    if (dumpHasAny(nodes, cfg.successMarkers)) return 'success';
+    if (dumpHasAny(nodes, cfg.buttonMarkers)) return 'button';
+    if (!wantButton && dumpHasAny(nodes, cfg.entryMarkers)) return 'entry';
+    return null;
+  };
+  let r = await pollDumpUntil(deviceId, scan(false), 25000);
+  if (!r) {
+    return { outcome: 'not_found', note: 'Không thấy mục điểm danh trên TikTok Lite sau 25 giây (kiểm tra máy / dấu chữ checkin trong flow-config.json)' };
+  }
+  if (r.hit === 'success') return { outcome: 'success', already: true };
+  if (r.hit === 'entry') {
+    const t = await tapFirstMarker(deviceId, cfg.entryMarkers);
+    if (!t) return { outcome: 'not_found', note: 'Không bấm được vào mục điểm danh' };
+    log('Đã vào mục điểm danh ("' + t + '"), tìm nút điểm danh...');
+    await sleepMs(1500);
+    r = await pollDumpUntil(deviceId, scan(true), 15000);
+    if (!r) return { outcome: 'not_found', note: 'Đã vào mục điểm danh nhưng không thấy nút điểm danh' };
+    if (r.hit === 'success') return { outcome: 'success', already: true };
+  }
+  // r.hit === 'button'
+  const bt = await tapFirstMarker(deviceId, cfg.buttonMarkers);
+  if (!bt) return { outcome: 'not_found', note: 'Không bấm được nút điểm danh' };
+  log('Đã bấm nút điểm danh "' + bt + '", chờ xác nhận...');
+  const r2 = await pollDumpUntil(deviceId,
+    (nodes) => dumpHasAny(nodes, cfg.successMarkers), 15000);
+  if (!r2) {
+    return { outcome: 'no_success', note: 'Đã bấm nút điểm danh nhưng chưa thấy chữ báo thành công sau 15 giây' };
+  }
+  return { outcome: 'success', already: false };
+}
+
 /**
  * Tao ham park() cho mot buoc pipeline: dat buoc + may vao waiting_manual
  * va cho POST /api/pipeline/resume (dung lai co che cua buoc "manual").
@@ -723,6 +1221,33 @@ const PIPELINES = [
       { type: 'assign_gmail', reuseAssigned: true, name: 'Cấp Gmail từ kho cho máy' },
       { type: 'gmail_signin', name: 'Tự đăng nhập Google bằng Gmail vừa cấp' }
     ]
+  },
+  {
+    // Giai doan 3.2: cap tai khoan XEM HEO tu kho heo (may da co tai
+    // khoan duoc cap thi dung lai) roi TU dang nhap TikTok Lite bang
+    // tiktokLoginSequence — chi dung Cho cham tay khi TikTok bat xac
+    // minh (ma xac nhan / CAPTCHA).
+    id: 'dang-nhap-tiktok-lite',
+    name: 'Đăng nhập TikTok Lite bằng TK trong kho',
+    steps: [
+      { type: 'assign_heo', reuseAssigned: true, name: 'Cấp tài khoản heo từ kho cho máy' },
+      { type: 'tiktok_login', name: 'Tự đăng nhập TikTok Lite bằng tài khoản vừa cấp' }
+    ]
+  },
+  {
+    // Giai doan 3.2: diem danh 14 ngay — mo TikTok Lite, vao muc diem
+    // danh va bam nut diem danh (checkinSequence). Thay chu thanh cong
+    // thi ghi ngay hom nay vao checkin-state.json; hom nay da ghi roi
+    // thi buoc checkin bao "da diem danh" va xong ngay.
+    id: 'diem-danh',
+    name: 'Điểm danh 14 ngày',
+    genSteps: function (params, cfg) {
+      return [
+        { type: 'command', cmd: 'open_app', args: { 'package': TIKTOK_PKG }, name: 'Mở TikTok Lite' },
+        { type: 'wait', seconds: 3, name: 'Chờ app mở (3 giây)' },
+        { type: 'checkin', name: 'Điểm danh hôm nay' }
+      ];
+    }
   },
   {
     // Dang ky TikTok Lite BAN TU DONG: agent tu cham qua cac man hinh chao
@@ -820,6 +1345,9 @@ function buildSteps(pipeline, params) {
     }
     if (s.type === 'assign_gmail') {
       st.withSignin = !!s.withSignin;
+      st.reuseAssigned = !!s.reuseAssigned;
+    }
+    if (s.type === 'assign_heo') {
       st.reuseAssigned = !!s.reuseAssigned;
     }
     return st;
@@ -924,6 +1452,79 @@ async function runDevicePipeline(run, dr) {
         }
         step.status = 'done';
         step.note = 'Đã tự đăng nhập Google: ' + acct.email;
+      } else if (step.type === 'assign_heo') {
+        // Giai doan 3.2: cap tai khoan xem heo tu kho heo — cung mau voi
+        // assign_gmail (reuseAssigned: may da co thi dung lai).
+        step.status = 'running';
+        let hacct = step.reuseAssigned ? findHeoForDevice(dr.deviceId) : null;
+        if (hacct) {
+          step.note = 'Dùng tài khoản heo đã cấp cho máy: ' + hacct.username;
+        } else {
+          const res = assignHeo(dr.deviceId);
+          if (res.error) {
+            step.status = 'error';
+            step.note = 'Kho tài khoản heo hết tài khoản sẵn sàng (pool_empty)';
+            dr.status = 'error';
+            console.log('[pipeline] ' + run.id + ' ' + devLabel + ' assign_heo: pool_empty');
+            return;
+          }
+          hacct = res.account;
+          step.note = 'Đã cấp: ' + hacct.username;
+        }
+        dr._heoAccount = hacct;
+        step.status = 'done';
+      } else if (step.type === 'tiktok_login') {
+        // Giai doan 3.2: tu dang nhap TikTok Lite bang tai khoan heo da
+        // cap cho may (buoc assign_heo truoc do, hoac da cap tu truoc).
+        step.status = 'running';
+        const hacct2 = dr._heoAccount || findHeoForDevice(dr.deviceId);
+        if (!hacct2) {
+          step.status = 'error';
+          step.note = 'Máy chưa được cấp tài khoản heo — chạy bước cấp tài khoản trước';
+          dr.status = 'error';
+          console.log('[pipeline] ' + run.id + ' ' + devLabel + ' tiktok_login: chua co tai khoan');
+          return;
+        }
+        const out2 = await tiktokLoginSequence(dr.deviceId, hacct2, { park: makePipelinePark(run, dr, step) });
+        if (out2.outcome === 'stopped') {
+          step.status = 'stopped';
+          dr.status = 'stopped';
+          return;
+        }
+        if (out2.outcome !== 'done') {
+          step.status = 'error';
+          step.note = 'Đăng nhập TikTok Lite chưa xong: ' + (out2.note || out2.outcome);
+          dr.status = 'error';
+          console.log('[pipeline] ' + run.id + ' ' + devLabel + ' tiktok_login: ' + step.note);
+          return;
+        }
+        step.status = 'done';
+        step.note = 'Đã đăng nhập TikTok Lite: ' + hacct2.username;
+      } else if (step.type === 'checkin') {
+        // Giai doan 3.2: diem danh 14 ngay. Hom nay da ghi roi thi xong
+        // ngay, khong can mo app lai.
+        step.status = 'running';
+        const today = todayTokyo();
+        const stc = getCheckinState(dr.deviceId);
+        if (stc.dates.indexOf(today) >= 0) {
+          step.status = 'done';
+          step.note = 'Hôm nay đã điểm danh rồi — ngày ' + stc.dates.length + '/14';
+        } else {
+          const out3 = await checkinSequence(dr.deviceId, {});
+          if (out3.outcome === 'success') {
+            const rec = recordCheckin(dr.deviceId);
+            step.status = 'done';
+            step.note = 'Đã điểm danh ngày ' + rec.count + '/14' + (rec.complete ? ' — 🎉 ĐỦ 14 NGÀY!' : '');
+            addEvent('checkin_success', dr.deviceId,
+              '📅 Điểm danh 14 ngày: đã điểm danh ngày ' + rec.count + '/14' + (out3.already ? ' (màn hình đã báo điểm danh sẵn)' : ''));
+          } else {
+            step.status = 'error';
+            step.note = 'Điểm danh chưa xong: ' + (out3.note || out3.outcome);
+            dr.status = 'error';
+            console.log('[pipeline] ' + run.id + ' ' + devLabel + ' checkin: ' + step.note);
+            return;
+          }
+        }
       } else if (step.type === 'command') {
         step.status = 'running';
         const timeout = (step.cmd === 'install_url') ? 120000 : CMD_TIMEOUT_MS;
@@ -1107,6 +1708,7 @@ function publicWatch(w) {
     endsAt: w.endsAt || null,
     minutes: w.minutes || 30,
     gameUrl: w.gameUrl || '',
+    detect: w.detect !== false,
     rounds: w.rounds || 0,
     matchedMarker: w.matchedMarker || null,
     lastError: w.lastError || null,
@@ -1163,7 +1765,10 @@ async function watchLoop(w) {
       return;
     }
     // 1) Quet man hinh hien tai tim chu bao check-in thanh cong
-    try {
+    // (chi khi w.detect — vong "Check heo"; vong xem video thuong bo qua)
+    if (w.detect === false) {
+      // Xem video thuong: khong quet thanh cong, chi vuot + nghi ben duoi
+    } else try {
       const res = await sendCommand(w.deviceId, 'dump_ui', {}, 20000);
       if (res && res.ok && res.data && Array.isArray(res.data.nodes)) {
         errStreak = 0;
@@ -1239,6 +1844,7 @@ async function startWatch(deviceId, opts) {
     endsAtMs: Date.now() + minutes * 60000,
     minutes: minutes,
     gameUrl: opts.gameUrl || '',
+    detect: opts.detect !== false,
     rounds: 0,
     matchedMarker: null,
     lastError: null,
@@ -1458,6 +2064,97 @@ const httpServer = http.createServer(async (req, res) => {
       return;
     }
 
+    // ---- Kho tai khoan xem heo (Giai doan 3.2) ----
+    if (req.method === 'GET' && u.pathname === '/api/heo') {
+      jsonRes(res, 200, {
+        ok: true,
+        accounts: heoPool.accounts.map(publicHeoAccount),
+        ready: heoPool.accounts.filter((a) => a.status === 'ready').length
+      });
+      return;
+    }
+    if (req.method === 'POST' && u.pathname === '/api/heo/import') {
+      const body = await readBody(req);
+      let text = body;
+      try {
+        const j = JSON.parse(body);
+        if (j && typeof j.text === 'string') text = j.text;
+      } catch (e) { /* body la text tho */ }
+      const r = importHeoAccounts(text);
+      jsonRes(res, 200, { ok: true, added: r.added, skipped: r.skipped, total: r.total });
+      return;
+    }
+    if (req.method === 'POST' && u.pathname === '/api/heo/assign-next') {
+      let j;
+      try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
+      if (!j.deviceId) { jsonRes(res, 400, { ok: false, error: 'missing_deviceId' }); return; }
+      const r = assignHeo(j.deviceId);
+      if (r.error) { jsonRes(res, 200, { ok: false, error: r.error }); return; }
+      jsonRes(res, 200, { ok: true, account: publicHeoAccount(r.account) });
+      return;
+    }
+    if (req.method === 'POST' && (u.pathname === '/api/heo/mark-die' || u.pathname === '/api/heo/delete')) {
+      let j;
+      try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
+      const idx = heoPool.accounts.findIndex((a) =>
+        (j.id && a.id === j.id) || (j.username && a.username.toLowerCase() === String(j.username).toLowerCase()));
+      if (idx < 0) { jsonRes(res, 200, { ok: false, error: 'account_not_found' }); return; }
+      if (u.pathname === '/api/heo/mark-die') {
+        heoPool.accounts[idx].status = 'die';
+        saveHeoPool();
+        jsonRes(res, 200, { ok: true, account: publicHeoAccount(heoPool.accounts[idx]) });
+      } else {
+        const removed = heoPool.accounts.splice(idx, 1)[0];
+        saveHeoPool();
+        jsonRes(res, 200, { ok: true, removed: publicHeoAccount(removed) });
+      }
+      return;
+    }
+
+    // ---- Diem danh 14 ngay (Giai doan 3.2) ----
+    if (req.method === 'GET' && u.pathname === '/api/checkin') {
+      const list = Object.keys(checkinState).map((deviceId) => {
+        const pc = publicCheckin(deviceId);
+        const dev = devices.get(deviceId);
+        return {
+          deviceId: deviceId,
+          label: dev ? (dev.label || deviceId) : deviceId,
+          count: pc.count,
+          dates: pc.dates,
+          todayDone: pc.todayDone,
+          complete: pc.complete,
+          cycleStart: pc.cycleStart
+        };
+      });
+      list.sort((a, b) => (a.label || a.deviceId).localeCompare(b.label || b.deviceId));
+      jsonRes(res, 200, { ok: true, today: todayTokyo(), devices: list });
+      return;
+    }
+    if (req.method === 'POST' && u.pathname === '/api/checkin/reset') {
+      let j;
+      try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
+      if (!j.deviceId) { jsonRes(res, 400, { ok: false, error: 'missing_deviceId' }); return; }
+      checkinState[j.deviceId] = { dates: [], cycleStart: todayTokyo() };
+      saveCheckinState();
+      addEvent('checkin_day', j.deviceId, 'Đã bắt đầu chu kỳ điểm danh 14 ngày mới');
+      jsonRes(res, 200, { ok: true, checkin: publicCheckin(j.deviceId) });
+      return;
+    }
+
+    // ---- Link game chuyen dung (Giai doan 3.2) ----
+    if (req.method === 'GET' && u.pathname === '/api/game-link') {
+      jsonRes(res, 200, { ok: true, url: gameLink.url, updatedAt: gameLink.updatedAt });
+      return;
+    }
+    if (req.method === 'POST' && u.pathname === '/api/game-link') {
+      let j;
+      try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
+      gameLink = { url: String(j.url || '').trim(), updatedAt: nowIso() };
+      saveGameLink();
+      jsonRes(res, 200, { ok: true, url: gameLink.url, updatedAt: gameLink.updatedAt });
+      return;
+    }
+
     // ---- Pipeline ----
     if (req.method === 'GET' && u.pathname === '/api/pipelines') {
       jsonRes(res, 200, {
@@ -1534,7 +2231,7 @@ const httpServer = http.createServer(async (req, res) => {
       }
       const out = [];
       for (const deviceId of j.deviceIds) {
-        const r = await startWatch(deviceId, { minutes: j.minutes, gameUrl: j.gameUrl || '' });
+        const r = await startWatch(deviceId, { minutes: j.minutes, gameUrl: j.gameUrl || '', detect: j.detect });
         if (r.error) out.push({ deviceId: deviceId, ok: false, error: r.error });
         else out.push({ deviceId: deviceId, ok: r.watch.status !== 'error', watch: publicWatch(r.watch) });
       }
