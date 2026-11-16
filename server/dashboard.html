@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Farm Control — Điều khiển dàn máy (Giai đoạn 3)</title>
+<title>Farm Control — Điều khiển dàn máy (Giai đoạn 3.1)</title>
 <style>
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #0f766e; color: #123; }
   header { background: #115e59; color: #fff; padding: 14px 18px; }
@@ -67,7 +67,7 @@
 </head>
 <body>
 <header>
-  <h1>🌾 Farm Control — Điều khiển dàn máy (Giai đoạn 3)</h1>
+  <h1>🌾 Farm Control — Điều khiển dàn máy (Giai đoạn 3.1)</h1>
   <p><span class="dot" id="serverDot"></span><span id="serverInfo">Đang nối server...</span></p>
 </header>
 <main>
@@ -109,7 +109,7 @@
 
   <div class="panel" id="gmailPanel">
     <h2>✉️ Kho Gmail</h2>
-    <div class="small">Nhập mỗi dòng một tài khoản, dạng <b>email|mật khẩu</b> hoặc <b>email:mật khẩu</b>. Mật khẩu được lưu ở server và <b>luôn hiển thị dạng che</b> — chỉ được gửi thẳng tới máy khi chạy hỗ trợ đăng nhập.</div>
+    <div class="small">Nhập mỗi dòng một tài khoản, dạng <b>email|mật khẩu</b> hoặc <b>email:mật khẩu</b>. Mật khẩu được lưu ở server và <b>luôn hiển thị dạng che</b> — chỉ được gửi thẳng tới máy khi chạy đăng nhập. <b>Mới (3.1):</b> nút <b>✉️ Cấp Gmail</b> ngay trên thẻ máy sẽ chạy quy trình tự động: cấp tài khoản từ kho, máy tự mở màn hình đăng nhập Google, tự nhập email + mật khẩu và bấm Tiếp theo — chỉ dừng <b>“Chờ chạm tay”</b> khi Google bắt xác minh (CAPTCHA / mã điện thoại), xử lý trên máy xong bấm “Đã xử lý — chạy tiếp” ở mục Pipeline.</div>
     <textarea id="gmailImportText" placeholder="vidu@gmail.com|matkhau123&#10;vidu2@gmail.com:matkhau456"></textarea>
     <div class="row">
       <button id="gmailImportBtn">Nhập vào kho</button>
@@ -279,6 +279,23 @@ function renderDevices(list) {
     addBtn('Đánh thức', function () { sendCmd(d.id, name, 'wake', {}); });
     addBtn('Chụp màn hình', function () { sendCmd(d.id, name, 'screenshot', {}); });
     addBtn('Mở TikTok Lite', function () { sendCmd(d.id, name, 'open_app', { 'package': 'com.zhiliaoapp.musically.go' }); });
+    addBtn('✉️ Cấp Gmail', function () {
+      logLine(name + ': bắt đầu Cấp Gmail tự động (cấp tài khoản + tự đăng nhập Google)...', null);
+      fetch('/api/pipeline/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pipelineId: 'cap-gmail-tu-dong', deviceIds: [d.id], params: {} })
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j && j.ok) {
+          currentRunId = j.runId;
+          document.getElementById('pipeStop').disabled = false;
+          logLine(name + ': quy trình Cấp Gmail tự động đã chạy (' + j.runId + ') — theo dõi ở mục Pipeline và nhật ký', true);
+        } else {
+          logLine(name + ': không chạy được Cấp Gmail tự động: ' + ((j && j.error) || '?'), false);
+        }
+        refreshRuns();
+        refreshGmail();
+      }).catch(function (e) { logLine(name + ': lỗi Cấp Gmail (' + e + ')', false); });
+    }, 'warn');
     if (d.watch && (d.watch.status === 'watching' || d.watch.status === 'starting')) {
       addBtn('■ Dừng xem game', function () {
         fetch('/api/watch/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIds: [d.id] }) })
@@ -660,7 +677,7 @@ loadPipelines();
 refreshRuns();
 refreshEvents();
 setInterval(function () { refreshDevices(); refreshGmail(); refreshRuns(); refreshEvents(); }, 3000);
-logLine('Dashboard Giai đoạn 3 đã mở. Đang chờ máy kết nối...', null);
+logLine('Dashboard Giai đoạn 3.1 đã mở. Đang chờ máy kết nối...', null);
 </script>
 </body>
 </html>

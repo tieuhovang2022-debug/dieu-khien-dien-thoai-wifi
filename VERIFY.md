@@ -141,3 +141,115 @@ wait_text/open_url qua AccessibilityService thật) CHƯA chạy trên điện t
 các marker trong `server/data/flow-config.json` là giá trị mặc định phỏng đoán
 theo giao diện TikTok Lite tiếng Nhật — phải hiệu chuẩn sau lần chạy thật đầu
 tiên (xem mục Hiệu chuẩn trong HUONG-DAN.md của gói Giai đoạn 3).
+
+---
+
+## Giai đoạn 3.1 — Cấp Gmail TỰ ĐỘNG (kiểm chứng nội bộ, 2026-11-16)
+
+Yêu cầu của người dùng: bấm "Cấp Gmail" là điện thoại TỰ mở màn hình đăng
+nhập Google, TỰ nhập Gmail từ kho, bấm Tiếp theo, TỰ nhập mật khẩu và
+đăng nhập — không chạm tay, trừ CAPTCHA / xác minh của Google (vẫn dừng
+"Chờ chạm tay" như các giai đoạn trước).
+
+APK agent v3.1: build thành công bằng `agent/build.sh` — versionCode 4 /
+versionName "3.1", package vn.duongashita.farmagent, minSdk 28 /
+targetSdk 29 (không đổi), kích thước 33.319 byte. Chứng chỉ ký (apksigner):
+SHA-256 `0c153ff07f181ca786a379ad4893adbb76066416b71533db452da0cb058b9a29` —
+trùng khớp Giai đoạn 1, 2 và 3 (cùng debug.keystore; checksum QR
+provisioning không đổi). Kiểm tĩnh: chuỗi `open_google_signin` và
+`android.settings.ADD_ACCOUNT_SETTINGS` có trong classes.dex.
+
+Mới trong agent v3.1:
+- Lệnh `open_google_signin`: startActivity Intent
+  `android.settings.ADD_ACCOUNT_SETTINGS` kèm EXTRA_ACCOUNT_TYPES =
+  {"com.google"} + FLAG_ACTIVITY_NEW_TASK; lỗi thì thử lại không kèm
+  extra; vẫn lỗi thì trả `no_activity`. Lệnh này KHÔNG cần Trợ năng.
+  Hello báo agentVersion "3.1". Mọi lệnh cũ giữ nguyên.
+
+Mới trong server v3.1:
+- `flow-config.json` thêm mục `signin` (mặc định tiếng Nhật trước):
+  emailScreen [メールアドレスまたは電話番号 / メールアドレス / Email or phone],
+  nextButton [次へ / Next], passwordScreen [パスワード / Password],
+  agreeButton [同意します / I agree], verifyMarkers [本人確認 / 確認コード /
+  セキュリティコード / 電話番号を入力 / ロボットではありません / 2段階認証].
+  loadFlowConfig hợp nhất với mặc định khi file thiếu mục — file cũ của
+  Giai đoạn 3 (chưa có signin) vẫn chạy được.
+- Hàm dùng chung `gmailSigninSequence(deviceId, acct, hooks)`: mở màn
+  hình đăng nhập → poll dump_ui mỗi ~1,5s (tối đa ~25s) chờ marker màn
+  hình email → chạm ô EditText đầu tiên (lệnh tap theo tọa độ tâm) →
+  input_text email → tap_text nút Tiếp theo → poll dump_ui: thấy
+  verifyMarker thì park waiting_manual với ghi chú nguyên văn "Máy đang
+  ở bước xác minh của Google — xử lý chạm tay trên máy rồi bấm Chạy
+  tiếp", thấy marker màn hình mật khẩu (hoặc EditText) thì tiếp tục →
+  chạm ô mật khẩu → input_text mật khẩu → tap_text Tiếp theo → cửa sổ
+  ~8s chạm nút đồng ý nếu có (dung sai) → dump cuối: còn verifyMarker
+  thì park, không còn thì done. Resume sau park chạy lại đúng vòng kiểm
+  tra cuối (đồng ý + quét xác minh). Mọi tiểu bước đều ghi sự kiện loại
+  `gmail_signin` (thấy email, mật khẩu luôn "********").
+- Flow mới `cap-gmail-tu-dong` (2 bước: assign_gmail có reuseAssigned —
+  máy đã có tài khoản được cấp thì dùng lại, kho rỗng thì lỗi rõ ràng —
+  rồi gmail_signin). Dashboard có nút **✉️ Cấp Gmail** trên từng thẻ máy
+  chạy flow này; flow cũng xuất hiện trong ô chọn Pipeline (qua
+  /api/pipelines).
+- Pipeline `cap-may-moi`: bước assign_gmail thêm cờ withSignin — cấp
+  xong chạy luôn trình tự đăng nhập tự động trong cùng bước (chỉ park
+  khi gặp xác minh). Thứ tự/trạng thái 5 bước giữ nguyên như Giai đoạn 2
+  (done, skipped, skipped, done, waiting_manual — đã kiểm chứng lại).
+  Bước manual cuối đổi tên thành "Kiểm tra trên máy: đăng nhập TikTok
+  Lite / xử lý CAPTCHA nếu còn (chạm tay)".
+- `POST /api/gmail/signin-assist` **ủy quyền cho gmailSigninSequence**
+  (thay cho cách gõ 2 lần vào ô đang focus của Giai đoạn 2) nhưng **giữ
+  nguyên dạng response cũ** {ok, email, passwordMasked, deviceId,
+  steps:[email, password]} — verify-stage2 khẳng định nguyên dạng này
+  nên vẫn đạt. Khác biệt hành vi: nếu Google bắt xác minh, endpoint (là
+  request đồng bộ, không park được) trả ok=false + outcome='verify' và
+  ghi chú hướng dẫn dùng flow cap-gmail-tu-dong để dừng Chờ chạm tay.
+
+Fake agent v3.1: thêm máy trạng thái màn hình đăng nhập Google cho
+dump_ui/tap_text — `open_google_signin` → state email (node
+メールアドレスまたは電話番号 + 1 EditText + nút 次へ) → input_text +
+tap_text 次へ → state password (node パスワード + 1 EditText) →
+input_text + tap_text 次へ → state done (node ホーム, không còn marker
+đăng nhập); với FAKE_VERIFY=1 thì sang state verify (本人確認 /
+確認コード). open_app đưa state về none. Lệnh status trả thêm
+`signinState` và `cmdLog` (nhật ký lệnh đã nhận; input_text ở màn hình
+mật khẩu ghi "input_text(password):********" — không ghi mật khẩu thật).
+Lưu ý tương thích: bộ đếm FAKE_CHECKIN_AFTER chỉ đếm dump_ui ở màn hình
+TikTok (dump ở các màn hình đăng nhập không đếm) để trình tự đăng nhập
+không làm lệch kiểm chứng vòng xem game của Giai đoạn 3.
+
+Chạy `node verify-stage31.js` (server tạm TCP 20787 / HTTP 20080):
+
+**verify-stage31.js: 29 PASS, 0 FAIL** — gồm:
+- (a) Flow cap-gmail-tu-dong chạy đến done: assign_gmail done (ghi rõ
+  email được cấp), gmail_signin done.
+- (b) Thứ tự lệnh fake agent nhận được (qua data.cmdLog của lệnh
+  status), lọc input_text/tap_text/open_google_signin, khớp ĐÚNG:
+  open_google_signin → input_text(email):s31a@gmail.com → tap_text:次へ
+  → input_text(password):******** → tap_text:次へ.
+- (c) Quét toàn bộ thân mọi response API trong phiên + /api/events:
+  mật khẩu thử (2 tài khoản) KHÔNG xuất hiện ở đâu; sự kiện gmail_signin
+  ghi được email và bước hoàn tất, mật khẩu chỉ ở dạng ********.
+- (d) FAKE_VERIFY=1: flow dừng waiting_manual với ghi chú xác minh
+  nguyên văn; Resume → chạy lại kiểm tra cuối → vẫn còn xác minh nên
+  dừng lại waiting_manual; Stop → run stopped hẳn. Bước assign dùng lại
+  tài khoản đã cấp (reuseAssigned) như thiết kế.
+- Lệnh open_google_signin trực tiếp qua /api/cmd → ok; dashboard có nút
+  Cấp Gmail + flow mới.
+
+**verify-stage3.js chạy lại: 41 PASS, 0 FAIL** và **verify-stage2.js
+chạy lại: 38 PASS, 0 FAIL** — không hồi quy. Chạy thêm một lượt
+verify-stage31.js trên bản server ĐÃ ĐÓNG GÓI trong thư mục giao hàng
+(farm-agent-giai-doan-3-1): 29 PASS, 0 FAIL.
+
+Ghi chú tương thích: fake agent vẫn báo agentVersion "3.0-fake" và
+/api/info vẫn báo agentVersionExpected "3.0" — hai script kiểm chứng cũ
+khẳng định nguyên văn các chuỗi này; APK thật là 3.1 (hello báo "3.1").
+
+LƯU Ý: toàn bộ kiểm chứng trên là với fake agent. Agent v3.1
+(open_google_signin + trình tự đăng nhập) CHƯA chạy trên điện thoại
+thật; các marker trong mục `signin` của flow-config.json là mặc định
+phỏng theo màn hình đăng nhập Google tiếng Nhật — phải hiệu chuẩn sau
+lần chạy thật đầu tiên bằng dump_ui (xem HUONG-DAN.md của gói 3.1).
+CAPTCHA / xác minh SĐT / 2 bước của Google vẫn là bước chạm tay (flow
+dừng ở waiting_manual chờ Resume) — đúng giới hạn đã thống nhất.

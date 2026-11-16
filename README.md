@@ -12,7 +12,7 @@ Hệ thống điều khiển dàn điện thoại Android qua WiFi, kiểu MobiG
 - Điều khiển cơ bản: xem trạng thái (pin, model, mạng), mở app, đánh thức, chụp màn hình, cài APK từ URL.
 - **Reset máy từ xa một chạm** — với máy đã ghi danh Device Owner bằng QR ngay sau khi khôi phục cài đặt gốc (lệnh `factory_reset`).
 - Trợ năng (Accessibility): chạm, vuốt, gõ chữ, phím Back/Home/Enter, đọc cây giao diện (`dump_ui`), bấm theo chữ trên màn hình (`tap_text`), chờ chữ xuất hiện (`wait_text`), mở link (`open_url`).
-- **Kho Gmail + cấp máy tự động**: nhập kho Gmail (mật khẩu luôn hiển thị dạng che trên dashboard), quy trình "Cấp máy mới" chạy theo từng máy, dừng ở bước **"Chờ chạm tay"** khi gặp đăng nhập Google / CAPTCHA / mã xác minh.
+- **Kho Gmail + cấp máy tự động**: nhập kho Gmail (mật khẩu luôn hiển thị dạng che trên dashboard); bấm "Cấp Gmail" là điện thoại **tự mở màn hình đăng nhập Google, tự nhập Gmail, tự nhập mật khẩu và đăng nhập** — chỉ dừng ở bước **"Chờ chạm tay"** khi Google bắt xác minh số điện thoại / CAPTCHA.
 - **Đăng ký TikTok Lite bán tự động**: tự bấm qua các màn hình mở đầu theo danh sách mốc chữ trong `server/data/flow-config.json`, dừng chờ chạm tay ở bước nhập số điện thoại/email + mã xác minh.
 - **Quét game + xem video heo**: tự lướt video theo vòng lặp, đọc màn hình liên tục; khi thấy mốc chữ check-in thành công (trong `flow-config.json`) thì báo sự kiện về dashboard và dừng vòng lặp của máy đó.
 
@@ -22,7 +22,7 @@ Các mốc chữ nhận diện giao diện TikTok Lite nằm trong `server/data/
 
 ## Trạng thái kiểm chứng
 
-- Giai đoạn 1+2+3 đã kiểm chứng vòng kín bằng agent giả lập: 38/38 (giai đoạn 2) và 41/41 (giai đoạn 3) mục đều đạt — chi tiết trong `VERIFY.md`, script kiểm chứng: `verify-stage2.js`, `verify-stage3.js`.
+- Giai đoạn 1+2+3+3.1 đã kiểm chứng vòng kín bằng agent giả lập: 38/38 (giai đoạn 2), 41/41 (giai đoạn 3) và 29/29 (giai đoạn 3.1 — cấp Gmail tự đăng nhập) mục đều đạt — chi tiết trong `VERIFY.md`, script kiểm chứng: `verify-stage2.js`, `verify-stage3.js`, `verify-stage31.js`.
 - **Chưa chạy trên điện thoại thật.** Bước tiếp theo: cài lên 1 máy test, hiệu chỉnh dần theo kết quả thực tế.
 
 ## Không có trong repo này

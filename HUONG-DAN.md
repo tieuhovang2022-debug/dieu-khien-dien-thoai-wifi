@@ -1,209 +1,178 @@
-# Farm Control — Giai đoạn 3: Hướng dẫn
+# Farm Control — Giai đoạn 3.1: Hướng dẫn
 
-Gói này hoàn thiện hệ thống điều khiển dàn máy không dây: **agent biết "nhìn"
-màn hình và bấm theo chữ, quy trình đăng ký TikTok Lite bán tự động, và vòng
-quét game & xem video heo tự báo khi check-in thành công.**
+Giai đoạn 3.1 thêm đúng một việc mà các giai đoạn trước còn thiếu:
+**bấm "Cấp Gmail" là điện thoại TỰ đăng nhập Google** — tự mở màn hình
+đăng nhập, tự nhập Gmail lấy từ kho, tự bấm "Tiếp theo", tự nhập mật
+khẩu và đăng nhập. Không cần chạm tay nữa — trừ khi Google bắt xác minh.
 
-> ⚠️ Nói thẳng trước: toàn bộ Giai đoạn 3 đã biên dịch và kiểm chứng vòng kín
-> bằng máy ảo (fake agent) trên máy chủ — nhưng **vẫn CHƯA chạy trên điện
-> thoại thật**, giống các giai đoạn trước. Lần test máy thật đầu tiên vẫn bắt
-> đầu từ các bước chạy server / cài agent như Giai đoạn 1–2, và các "dấu chữ"
-> nhận diện màn hình (mục 3) gần như chắc chắn phải **hiệu chuẩn** sau lần
-> chạy thật đầu tiên — đó là việc bình thường, cách làm ở mục 6.
-
----
-
-## 1. Giai đoạn 3 có gì mới
-
-**App Farm Agent v3.0 trên điện thoại** (cài đè lên v2 được — cùng chữ ký):
-- Lệnh mới `dump_ui`: gửi về server toàn bộ "cây giao diện" của màn hình hiện
-  tại — mọi dòng chữ / mô tả / nút đang thấy, kèm tọa độ (tối đa 500 mục).
-  Đây là "đôi mắt" của hệ thống.
-- Lệnh mới `tap_text {text, match}`: tự tìm nút/dòng chữ trên màn hình và
-  chạm vào giữa nó. `match` = `contains` (chữ cần tìm nằm trong dòng chữ,
-  mặc định) hoặc `exact` (khớp đúng toàn bộ). Không thấy thì trả lỗi
-  `text_not_found`.
-- Lệnh mới `wait_text {text, timeoutMs}`: chờ tối đa 30 giây cho một chữ
-  xuất hiện trên màn hình, trả về thấy hay chưa.
-- Lệnh mới `open_url {url}`: mở một link (ví dụ link game) bằng app mặc định
-  của máy. Link sai định dạng trả lỗi `bad_url`.
-- Cả 4 lệnh trên đều cần **Trợ năng đã bật** (như các lệnh chạm/nhập chữ của
-  Giai đoạn 2); chưa bật thì trả lỗi `no_accessibility`.
-- Mọi lệnh của Giai đoạn 1–2 (status / open_app / wake / install_url /
-  screenshot / tap / swipe / input_text / key / factory_reset) giữ nguyên.
-
-**Server v3 (chạy trên MacBook):**
-- File cấu hình mới `server/data/flow-config.json`: chứa các **dấu chữ**
-  (marker) để nhận diện màn hình TikTok Lite — sửa file này là đổi hành vi
-  của 2 quy trình mới, **không cần sửa code, không cần khởi động lại server**
-  (server đọc lại file mỗi lần chạy). File bị xoá/hỏng thì server tự dùng bộ
-  mặc định.
-- Quy trình mới **"Đăng ký TikTok Lite"** (bán tự động) — mục 4.
-- Quy trình mới **"Quét game & xem video"** + vòng xem chạy nền trên server,
-  tự phát hiện check-in thành công và báo lên dashboard — mục 5.
-- Dashboard thêm: ô tổng quan **"🐷 Check-in thành công"** (tổng số lần phát
-  hiện được), huy hiệu trạng thái xem game trên từng thẻ máy (Đang quét game
-  / 🎉 ĐÃ CHECK-IN / đã dừng / lỗi), nút **Quét game & xem video** và **Dừng
-  xem game** ngay trên thẻ máy, ô nhập **Link game** + **Thời gian xem** ở
-  panel quy trình, và nhật ký sự kiện **tô xanh nổi bật** mỗi lần có máy
-  check-in thành công.
-- API mới cho vòng xem: `POST /api/watch/start`, `POST /api/watch/stop`,
-  `GET /api/watch`, `GET /api/events`.
-- Kho Gmail, pipeline "Cấp máy mới", QR ghi danh Device Owner: giữ nguyên
-  như Giai đoạn 2. Mật khẩu vẫn luôn hiển thị dạng che.
+> ⚠️ Nói thẳng trước: Giai đoạn 3.1 đã biên dịch và kiểm chứng vòng kín
+> bằng máy ảo (fake agent): **29/29 mục kiểm chứng mới đạt, chạy lại bộ
+> kiểm chứng Giai đoạn 3 (41/41) và Giai đoạn 2 (38/38) vẫn đạt.** Nhưng
+> phần mới của 3.1 **vẫn CHƯA chạy trên điện thoại thật** — lần chạy thật
+> đầu tiên có thể phải hiệu chuẩn lại các "dấu chữ" nhận diện màn hình
+> đăng nhập Google (mục 5), giống như đã nói ở Giai đoạn 3.
 
 ---
 
-## 2. Chạy hệ thống (tóm tắt — chi tiết như gói Giai đoạn 2)
+## 1. Giai đoạn 3.1 có gì mới
 
-1. Giải nén gói này trên MacBook, mở Terminal trong thư mục `server/`, chạy
-   `node server.js` → mở dashboard `http://localhost:8080`.
-2. Cài `agent.apk` v3 lên máy test (tải từ `http://<IP-MacBook>:8080/apks/agent.apk`
-   — gói đã để sẵn bản v3 trong `server/public-apks/`), nhập IP MacBook +
-   cổng `8787` + nhãn máy → **Lưu & Kết nối** → cho phép chụp màn hình → tắt
-   tối ưu pin cho agent.
-3. Bật **Trợ năng** cho Farm Agent (Cài đặt → Trợ năng → dịch vụ đã cài →
-   Farm Agent) — bắt buộc cho mọi tính năng mới của Giai đoạn 3.
-4. (Nếu muốn reset từ xa) ghi danh **Device Owner** bằng QR như hướng dẫn
-   Giai đoạn 2 — không đổi.
+**App Farm Agent v3.1 trên điện thoại** (cài đè lên v3.0 được — cùng
+chữ ký, xem mục 2):
 
----
+- Lệnh mới `open_google_signin`: mở thẳng màn hình "thêm tài khoản
+  Google" của Android. Lệnh này **không cần Trợ năng** (chỉ là mở màn
+  hình); các bước gõ chữ/bấm nút sau đó vẫn cần Trợ năng như cũ.
+- Mọi lệnh của Giai đoạn 1–3 giữ nguyên.
 
-## 3. File cấu hình dấu chữ: `server/data/flow-config.json`
+**Server v3.1 (chạy trên MacBook):**
 
-```json
-{
-  "onboardingMarkers": ["同意する", "許可する", "スキップ", "次へ", "登録", "ログイン"],
-  "checkinSuccessMarkers": ["チェックイン完了", "チェックイン成功", "ポイントを獲得しました", "付与されました"]
-}
-```
+- Quy trình mới **"Cấp Gmail tự động"** — chạy bằng nút **✉️ Cấp Gmail**
+  ngay trên thẻ của từng máy ở dashboard, hoặc chọn trong mục Pipeline:
+  1. Cấp tài khoản từ kho Gmail cho máy (máy đã có tài khoản được cấp
+     thì dùng lại tài khoản đó, không tốn thêm tài khoản mới). Kho hết
+     tài khoản sẵn sàng thì quy trình báo lỗi rõ ràng và dừng.
+  2. Máy tự mở màn hình đăng nhập Google.
+  3. Server "nhìn" màn hình bằng `dump_ui`, chờ thấy ô nhập email thì
+     chạm vào ô và **tự nhập email**.
+  4. Tự bấm nút **Tiếp theo** （次へ）.
+  5. Chờ màn hình mật khẩu, chạm ô mật khẩu và **tự nhập mật khẩu**.
+  6. Tự bấm **Tiếp theo** lần nữa; nếu hiện nút đồng ý điều khoản thì
+     tự bấm luôn.
+  7. Quét lại màn hình lần cuối: xong thì báo **"✅ Đăng nhập Gmail
+     hoàn tất"** trong nhật ký sự kiện của dashboard.
+- Pipeline **"Cấp máy mới"** cũng dùng luôn trình tự tự động này ở bước
+  cấp Gmail (trước đây bước đăng nhập Google là bước chạm tay).
+- Nút "Hỗ trợ đăng nhập" cũ trong panel Kho Gmail giờ cũng chạy trình
+  tự tự động này (không còn kiểu gõ 2 lần vào ô đang chọn như trước).
+- **An toàn mật khẩu:** mật khẩu thật chỉ đi qua kênh lệnh giữa server
+  và app trên máy. Dashboard, nhật ký sự kiện và mọi API đều chỉ hiện
+  `********`. Trong nhật ký bạn sẽ thấy email và các bước đã làm, không
+  bao giờ thấy mật khẩu.
 
-- `onboardingMarkers`: các nút chữ mà quy trình đăng ký sẽ lần lượt thử chạm
-  trên các màn hình chào của TikTok Lite (đồng ý điều khoản, cho phép, bỏ
-  qua, tiếp theo, đăng ký, đăng nhập).
-- `checkinSuccessMarkers`: các dòng chữ chỉ xuất hiện khi **heo đã nhảy /
-  check-in thành công** — vòng xem game quét màn hình tìm đúng các chữ này.
-
-⚠️ Đây là **bộ mặc định phỏng đoán** theo giao diện TikTok Lite tiếng Nhật
-phổ biến. Chữ trên máy thật có thể khác (khác phiên bản app, khác ngôn ngữ,
-thêm emoji/khoảng trắng...). Vì vậy mới có mục 6 — Hiệu chuẩn.
-
----
-
-## 4. Quy trình "Đăng ký TikTok Lite" (bán tự động)
-
-Chọn ở panel **Chạy quy trình** → tick máy → **Bắt đầu chạy**. Các bước:
-
-1. Mở app TikTok Lite, chờ 5 giây cho app nạp xong.
-2. Lần lượt thử chạm các nút trong `onboardingMarkers` (mỗi nút cách nhau
-   1 giây). **Bước nào không thấy nút thì ghi chú "bỏ qua (dung sai)" và đi
-   tiếp — không làm hỏng cả quy trình**, vì mỗi máy/phiên bản hiện các màn
-   hình chào khác nhau.
-3. Dừng ở bước **CHỜ CHẠM TAY**: "Đăng nhập: nhập số điện thoại/email, mã xác
-   minh và CAPTCHA trên máy". Đây là phần **bắt buộc làm tay** — Google/
-   TikTok chặn tự động hoá ở đúng chỗ này (mã SMS, CAPTCHA). Huynh đăng nhập
-   trên máy xong thì bấm **Đã xử lý — chạy tiếp** ở dòng của máy.
-4. Sau khi chạy tiếp: máy thử chạm lại 「登録」/「次へ」 để chốt các màn hình
-   còn lại (vẫn dung sai) → hoàn thành.
-
-Nhiều máy chạy song song được; mỗi máy dừng chờ chạm tay độc lập.
+**Khi Google bắt xác minh thì sao?** Nếu giữa chừng Google hiện màn
+hình xác minh (nhập mã gửi về điện thoại, CAPTCHA "tôi không phải người
+máy", xác minh 2 bước...), quy trình **dừng ở trạng thái "Chờ chạm tay"**
+với ghi chú *"Máy đang ở bước xác minh của Google — xử lý chạm tay trên
+máy rồi bấm Chạy tiếp"*. Bạn cầm máy đó lên, xử lý bước xác minh bằng
+tay, rồi vào dashboard bấm **"Đã xử lý — chạy tiếp"** ở mục Pipeline —
+quy trình sẽ tự kiểm tra lại màn hình và hoàn tất. Đây là giới hạn của
+Google, không phải lỗi: không công cụ nào qua được bước này thay bạn.
 
 ---
 
-## 5. Quy trình "Quét game & xem video" (vòng xem tự động)
+## 2. Cách cập nhật từ gói Giai đoạn 3 đang chạy trên MacBook
 
-Hai cách bật:
+**Trên MacBook:**
 
-- **Từ panel quy trình:** chọn flow "Quét game & xem video heo (tự báo
-  check-in)", (tuỳ chọn) dán **Link game** và đặt **Thời gian xem** (mặc định
-  30 phút) → tick máy → **Bắt đầu chạy**.
-- **Ngay trên thẻ máy:** bấm **🐷 Quét game & xem video** (dùng Link game +
-  số phút đang điền ở panel quy trình). Đang xem thì nút đổi thành
-  **■ Dừng xem game**.
+1. Sang cửa sổ Terminal đang chạy server cũ, bấm **Ctrl + C** để dừng
+   server cũ.
+2. Giải nén gói mới này (`farm-agent-giai-doan-3-1`) — để cạnh thư mục
+   gói cũ cũng được.
+3. **Giữ lại kho Gmail (nếu đã nhập):** chép file
+   `data/gmail-pool.json` từ thư mục `server` của gói CŨ sang thư mục
+   `server/data` của gói MỚI (đè lên nếu có). Không chép thì kho Gmail ở
+   gói mới sẽ trống và phải nhập lại.
+4. Mở Terminal, `cd` vào thư mục `server` của gói MỚI rồi chạy:
+   `node server.js`
+5. Mở dashboard như cũ: `http://localhost:8080` (hoặc IP của MacBook).
 
-Cách vòng xem chạy (trên server, riêng từng máy):
+**Trên điện thoại (từng máy):**
 
-1. Mở TikTok Lite — hoặc mở thẳng **Link game** nếu có.
-2. Lặp lại cho tới khi hết giờ hoặc bị dừng:
-   - **Quét màn hình** (`dump_ui`): nếu thấy bất kỳ chữ nào trong
-     `checkinSuccessMarkers` → **heo đã nhảy!** Server ghi sự kiện
-     `checkin_success`, ô đếm **Check-in thành công** tăng 1, thẻ máy hiện
-     huy hiệu **🎉 ĐÃ CHECK-IN THÀNH CÔNG**, nhật ký hiện dòng xanh nổi bật,
-     và vòng xem của máy đó **tự dừng**.
-   - **Vuốt lên** xem video tiếp theo (tọa độ tính theo kích thước màn
-     hình), rồi nghỉ ngẫu nhiên **25–40 giây** mới lặp lại — nhịp xem giống
-     người thật hơn là vuốt liên tục đều tăm tắp.
-3. Hết giờ mà chưa check-in: vòng tự dừng, thẻ máy ghi "đã dừng".
-   Nếu máy mất kết nối/quét màn hình lỗi 3 lần liên tiếp: vòng dừng và ghi
-   lỗi rõ lý do.
-
----
-
-## 6. ★ HIỆU CHUẨN SAU LẦN CHẠY THẬT ĐẦU TIÊN (quan trọng nhất)
-
-Đây là vòng "test thử rồi chỉnh sửa dần" đã thống nhất: chạy thật → xem máy
-thật đang hiện chữ gì → sửa dấu chữ → chạy lại. Cụ thể:
-
-1. Để máy test đứng ở đúng màn hình cần nhận diện (ví dụ màn hình TikTok
-   Lite lúc vừa check-in xong, hoặc màn hình chào lúc mới mở app).
-2. Xem máy thật đang hiện những chữ gì bằng lệnh `dump_ui`. Cách dễ nhất:
-   mở Terminal trên MacBook (server đang chạy) và gõ — thay `<ID-MÁY>` bằng
-   id của máy (xem ở `http://localhost:8080/api/devices`):
-
-   ```
-   curl -s -X POST http://localhost:8080/api/cmd -H 'Content-Type: application/json' -d '{"deviceId":"<ID-MÁY>","cmd":"dump_ui","args":{}}'
-   ```
-
-   Kết quả trả về danh sách mọi dòng chữ (`text`) và mô tả (`desc`) đang có
-   trên màn hình thật.
-3. Mở `server/data/flow-config.json`, sửa 2 danh sách dấu chữ cho khớp chữ
-   thật vừa thấy:
-   - Màn hình chào hiện nút chữ gì khác → sửa `onboardingMarkers`.
-   - Màn hình check-in thành công hiện câu gì → chép **nguyên văn** câu đó
-     vào `checkinSuccessMarkers`.
-4. Chạy lại quy trình — **không cần khởi động lại server**, server đọc lại
-   file cấu hình mỗi lần chạy quy trình/vòng xem.
-5. Lặp lại tới khi nhận diện trúng. Nếu bí, gửi đệ kết quả `dump_ui` của
-   màn hình đó, đệ sửa dấu chữ cho.
+1. Cài file `agent.apk` mới (v3.1) đè lên bản cũ — **cùng chữ ký nên
+   Android cho cài đè như một bản cập nhật**: IP server, cổng và tên
+   máy đã lưu trong app được giữ nguyên, không phải nhập lại.
+2. Cách tiện nhất: trên trình duyệt của điện thoại mở
+   `http://<IP-MacBook>:8080/apks/agent.apk` (server mới tự phát file
+   APK mới tại địa chỉ này) rồi cài. Hoặc chép file `agent.apk` trong
+   gói này vào máy rồi cài như thường.
+3. Mở Farm Agent một lần để app chạy lại; kiểm tra dashboard thấy máy
+   **Online** và ghi **Agent v3.1** là xong.
+4. Nhắc lại 2 việc chỉ làm 1 lần cho mỗi máy (nếu chưa làm): bật **Trợ
+   năng** cho Farm Agent (để app gõ chữ/bấm nút được) và cho phép **chụp
+   màn hình** (để dùng nút chụp màn hình trên dashboard).
 
 ---
 
-## 7. Các giới hạn cần biết (nói thẳng)
+## 3. Cách dùng Cấp Gmail tự động
 
-- **Đăng ký TikTok Lite là BÁN tự động, không phải tự động 100%.** Nhập số
-  điện thoại/email, mã xác minh và CAPTCHA vẫn phải chạm tay — quy trình cố
-  tình dừng chờ ở đúng bước đó. Không có cách vượt CAPTCHA/xác minh một cách
-  đàng hoàng, và từ đầu dự án mình đã thống nhất như vậy.
-- **Phát hiện check-in phụ thuộc hoàn toàn vào chữ trên màn hình.** Nếu
-  TikTok Lite đổi câu chữ, hoặc máy để ngôn ngữ khác tiếng Nhật, vòng xem sẽ
-  không nhận ra cho tới khi hiệu chuẩn lại dấu chữ (mục 6). Ngược lại, nếu
-  một dòng chữ trong `checkinSuccessMarkers` xuất hiện ở màn hình khác (ví dụ
-  banner quảng cáo có câu tương tự), có thể báo nhầm — khi hiệu chuẩn nên
-  chọn câu chữ càng đặc trưng càng tốt.
-- `dump_ui` chỉ "thấy" được những gì AccessibilityService đọc được. Một số
-  màn hình vẽ bằng canvas/game (không có nút/chữ chuẩn Android) sẽ trả về
-  rất ít node — khi đó nhận diện bằng chữ không dùng được ở màn hình đó.
-- Các lệnh mới đều cần **Trợ năng bật**; máy tắt Trợ năng thì báo
-  `no_accessibility` ngay, không chạy ngầm được.
-- Vòng xem chạy trên **server**: MacBook tắt/ngủ hoặc máy rớt WiFi thì vòng
-  xem dừng theo. Nhiều máy cùng xem thì mỗi máy một vòng độc lập.
-- Toàn bộ Giai đoạn 3 **chưa chạy trên điện thoại thật** — kể cả agent v3.
-  Lần test thật đầu tiên hãy làm trên **1 máy test** trước, hiệu chuẩn xong
-  mới nhân ra cả dàn.
+1. Vào panel **Kho Gmail** trên dashboard, nhập tài khoản (mỗi dòng
+   `email|mật khẩu`) nếu kho đang trống.
+2. Ở **thẻ của máy** cần cấp, bấm **✉️ Cấp Gmail**.
+3. Ngồi xem **nhật ký sự kiện**: sẽ hiện lần lượt "đã mở màn hình đăng
+   nhập Google" → "đã nhập email ..." → "đã nhập mật khẩu ********" →
+   "✅ Đăng nhập Gmail hoàn tất". Tiến trình chi tiết từng bước cũng
+   hiện ở mục **Pipeline**.
+4. Nếu máy dừng ở **"Chờ chạm tay"**: cầm đúng máy đó, xử lý bước xác
+   minh Google trên màn hình máy, quay lại dashboard bấm **"Đã xử lý —
+   chạy tiếp"**.
+
+Điều kiện để chạy được: máy đang **Online**, đã bật **Trợ năng**, và
+kho Gmail còn tài khoản "Sẵn sàng" (hoặc máy đã được cấp tài khoản từ
+trước).
 
 ---
 
-## 8. Nội dung gói
+## 4. Giới hạn thành thật
 
-- `agent.apk` — Farm Agent v3.0 (ký cùng keystore với v1/v2, cài đè được).
-- `server/server.js`, `server/dashboard.html`, `server/fake-agent.js` —
-  server Giai đoạn 3 (Node thuần, không cần npm install).
-- `server/provisioning.json` — checksum chữ ký của APK cho QR ghi danh
-  (đừng sửa; chỉ đổi khi build lại APK bằng keystore khác).
-- `server/public-apks/agent.apk` — bản sao agent v3 để server phát cho điện
-  thoại tải và cho QR ghi danh.
-- `server/data/flow-config.json` — file cấu hình dấu chữ mặc định (mục 3, 6).
-- `server/data/` — nơi server tự tạo thêm `gmail-pool.json` khi chạy.
-- Kiểm chứng nội bộ: xem `VERIFY.md` trong thư mục dự án (mục Giai đoạn 3:
-  verify-stage3.js 41 mục kiểm tra vòng kín đều đạt; verify-stage2.js chạy
-  lại 38/38 đạt, không hồi quy).
+- **CAPTCHA / xác minh điện thoại / xác minh 2 bước của Google vẫn là
+  bước chạm tay.** Quy trình dừng ở "Chờ chạm tay" và chỉ chạy tiếp khi
+  bạn xử lý xong trên máy rồi bấm chạy tiếp. Tài khoản nào Google bắt
+  xác minh ngay từ bước nhập email cũng vậy.
+- **Dấu chữ nhận diện màn hình đăng nhập là giá trị mặc định tiếng
+  Nhật** (kèm vài dấu tiếng Anh) — phỏng theo màn hình đăng nhập Google
+  thông thường. Máy nào dùng ngôn ngữ khác, hoặc Google đổi giao diện,
+  thì có thể không khớp: triệu chứng là quy trình báo "Không thấy màn
+  hình nhập email/mật khẩu sau 25 giây". Cách sửa ở mục 5 — không cần
+  sửa code.
+- Đăng nhập Google trên máy **chưa từng có tài khoản Google nào** và
+  máy **đã có sẵn tài khoản Google khác** có thể hiện màn hình hơi
+  khác nhau; dấu chữ mặc định nhắm vào trường hợp phổ biến nhất (thêm
+  tài khoản mới).
+- Toàn bộ Giai đoạn 3.1 **chưa chạy trên điện thoại thật** — hãy thử
+  trước trên 1 máy, hiệu chuẩn dấu chữ (mục 5) cho khớp, rồi mới chạy
+  cho cả dàn.
+
+---
+
+## 5. Hiệu chuẩn dấu chữ đăng nhập (khi chạy thật không khớp)
+
+Các dấu chữ nằm trong file `server/data/flow-config.json`, mục
+**`signin`** — sửa file này bằng trình soạn thảo văn bản bất kỳ, **không
+cần khởi động lại server** (server đọc lại file mỗi lần chạy):
+
+- `emailScreen`: các dòng chữ chỉ xuất hiện ở màn hình nhập email
+  (mặc định: `メールアドレスまたは電話番号`, `メールアドレス`,
+  `Email or phone`).
+- `nextButton`: chữ trên nút đi tiếp (mặc định: `次へ`, `Next`).
+- `passwordScreen`: dòng chữ ở màn hình nhập mật khẩu (mặc định:
+  `パスワード`, `Password`).
+- `agreeButton`: nút đồng ý điều khoản nếu có (mặc định: `同意します`,
+  `I agree`) — không thấy cũng không sao.
+- `verifyMarkers`: các dòng chữ báo Google đang bắt xác minh (mặc
+  định: `本人確認`, `確認コード`, `セキュリティコード`,
+  `電話番号を入力`, `ロボットではありません`, `2段階認証`) — thấy một
+  trong các dòng này là quy trình dừng chờ chạm tay.
+
+**Cách lấy chữ thật trên màn hình máy:** khi máy đang ở màn hình đăng
+nhập cần hiệu chuẩn, gửi lệnh `dump_ui` cho máy đó (qua dashboard/API
+`/api/cmd`) — kết quả trả về toàn bộ chữ đang hiện trên màn hình. Copy
+đúng dòng chữ thật vào mục tương ứng trong `signin` rồi chạy lại.
+
+---
+
+## 6. Trong gói này có gì
+
+- `agent.apk` — Farm Agent v3.1 (cài đè lên v3.0/v2/v1 đều được, cùng
+  chữ ký).
+- `server/` — server v3.1 hoàn chỉnh: `server.js`, `dashboard.html`,
+  `fake-agent.js` (máy ảo để kiểm chứng), `provisioning.json`,
+  `public-apks/agent.apk` (bản v3.1 — server phát tại `/apks/agent.apk`),
+  `data/flow-config.json` (đã có mục `signin`) + `data/README.txt`.
+- `HUONG-DAN.md` — file này.
+
+Kiểm chứng nội bộ của giai đoạn này (máy ảo, vòng kín): flow Cấp Gmail
+tự động chạy đến hoàn tất; agent nhận đúng thứ tự lệnh mở màn hình →
+nhập email → bấm Tiếp theo → nhập mật khẩu → bấm Tiếp theo; mật khẩu
+không xuất hiện trong bất kỳ phản hồi API / nhật ký nào; với trường hợp
+Google bắt xác minh, flow dừng đúng ở "Chờ chạm tay" và chạy tiếp được
+sau khi bấm Resume. Chi tiết trong `VERIFY.md` của dự án.

@@ -1,4 +1,4 @@
-// Farm Control - Server Giai đoạn 3
+// Farm Control - Server Giai đoạn 3.1
 // TCP 8787: agent ket noi (JSON theo dong). HTTP 8080: dashboard + API.
 // Chi dung module co san cua Node (net/http/fs/path/os/crypto). Khong can npm install.
 //
@@ -18,6 +18,22 @@
 //   xem video heo, tu phat hien check-in thanh cong qua dump_ui).
 // - Watch manager: vong xem game chay nen theo tung may (API /api/watch),
 //   su kien check-in thanh cong ghi vao GET /api/events de dashboard hien.
+//
+// Giai doan 3.1 them:
+// - Lenh agent moi "open_google_signin": mo thang man hinh them tai khoan
+//   Google cua Android.
+// - Flow "cap-gmail-tu-dong": bam "Cap Gmail" la may TU mo man hinh dang
+//   nhap Google, TU nhap email tu kho, bam Tiep theo, TU nhap mat khau va
+//   dang nhap — khong can cham tay, TRU khi Google bat xac minh (CAPTCHA /
+//   ma dien thoai / 2 buoc): luc do flow dung o "Cho cham tay"
+//   (waiting_manual) dung co che cua pipeline. Cac dau chu nhan dien man
+//   hinh dang nhap Google nam trong muc "signin" cua flow-config.json.
+// - Pipeline "cap-may-moi": buoc cap Gmail chay luon trinh tu dang nhap tu
+//   dong tren (chi dung Cho cham tay khi Google bat xac minh).
+// - POST /api/gmail/signin-assist uy quyen cho trinh tu dang nhap tu dong
+//   nay (van giu nguyen dang response cu).
+// - AN TOAN: mat khau that CHI di qua kenh lenh TCP toi agent; moi log /
+//   su kien / response API deu chi hien "********".
 'use strict';
 const net = require('net');
 const http = require('http');
@@ -313,17 +329,43 @@ function findAccountForDevice(deviceId) {
 //   checkinSuccessMarkers: cac chu bao hieu "heo da nhay / check-in thanh
 //     cong" — vong xem game quet dump_ui, thay mot trong cac chu nay la bao
 //     thanh cong. Cung can hieu chuan theo man hinh that.
+//   signin (Giai doan 3.1): cac dau chu nhan dien man hinh DANG NHAP GOOGLE
+//     cho flow cap Gmail tu dong — emailScreen (man hinh nhap email),
+//     nextButton (nut Tiep theo), passwordScreen (man hinh nhap mat khau),
+//     agreeButton (nut dong y dieu khoan neu co), verifyMarkers (cac chu
+//     bao Google dang bat XAC MINH: CAPTCHA / ma dien thoai / 2 buoc — thay
+//     la dung Cho cham tay). Mac dinh theo tieng Nhat truoc, kem tieng Anh;
+//     cung can hieu chuan theo man hinh dang nhap that tren may that.
 // File thieu hoac hong -> dung mac dinh, server khong chet.
 const FLOW_CONFIG_FILE = path.join(DATA_DIR, 'flow-config.json');
 const FLOW_DEFAULTS = {
   onboardingMarkers: ['同意する', '許可する', 'スキップ', '次へ', '登録', 'ログイン'],
-  checkinSuccessMarkers: ['チェックイン完了', 'チェックイン成功', 'ポイントを獲得しました', '付与されました']
+  checkinSuccessMarkers: ['チェックイン完了', 'チェックイン成功', 'ポイントを獲得しました', '付与されました'],
+  signin: {
+    emailScreen: ['メールアドレスまたは電話番号', 'メールアドレス', 'Email or phone'],
+    nextButton: ['次へ', 'Next'],
+    passwordScreen: ['パスワード', 'Password'],
+    agreeButton: ['同意します', 'I agree'],
+    verifyMarkers: ['本人確認', '確認コード', 'セキュリティコード', '電話番号を入力', 'ロボットではありません', '2段階認証']
+  }
 };
 
 function sanitizeMarkers(v, fallback) {
   if (!Array.isArray(v)) return fallback.slice();
   const out = v.filter((x) => typeof x === 'string' && x.trim().length > 0);
   return out.length ? out : fallback.slice();
+}
+
+function sanitizeSignin(v) {
+  const d = FLOW_DEFAULTS.signin;
+  const s = (v && typeof v === 'object') ? v : {};
+  return {
+    emailScreen: sanitizeMarkers(s.emailScreen, d.emailScreen),
+    nextButton: sanitizeMarkers(s.nextButton, d.nextButton),
+    passwordScreen: sanitizeMarkers(s.passwordScreen, d.passwordScreen),
+    agreeButton: sanitizeMarkers(s.agreeButton, d.agreeButton),
+    verifyMarkers: sanitizeMarkers(s.verifyMarkers, d.verifyMarkers)
+  };
 }
 
 function loadFlowConfig() {
@@ -333,12 +375,14 @@ function loadFlowConfig() {
     if (!j || typeof j !== 'object') throw new Error('bad config');
     return {
       onboardingMarkers: sanitizeMarkers(j.onboardingMarkers, FLOW_DEFAULTS.onboardingMarkers),
-      checkinSuccessMarkers: sanitizeMarkers(j.checkinSuccessMarkers, FLOW_DEFAULTS.checkinSuccessMarkers)
+      checkinSuccessMarkers: sanitizeMarkers(j.checkinSuccessMarkers, FLOW_DEFAULTS.checkinSuccessMarkers),
+      signin: sanitizeSignin(j.signin)
     };
   } catch (e) {
     return {
       onboardingMarkers: FLOW_DEFAULTS.onboardingMarkers.slice(),
-      checkinSuccessMarkers: FLOW_DEFAULTS.checkinSuccessMarkers.slice()
+      checkinSuccessMarkers: FLOW_DEFAULTS.checkinSuccessMarkers.slice(),
+      signin: sanitizeSignin(null)
     };
   }
 }
@@ -379,6 +423,271 @@ function addEvent(type, deviceId, message) {
   return ev;
 }
 
+// ================= Trinh tu DANG NHAP GOOGLE TU DONG (Giai doan 3.1) =================
+// Dung chung cho flow "cap-gmail-tu-dong", buoc cap Gmail cua pipeline
+// "cap-may-moi" va endpoint /api/gmail/signin-assist.
+// Trinh tu: mo man hinh dang nhap Google (open_google_signin) -> cho man
+// hinh email (quet dump_ui) -> cham o EditText + nhap email -> bam Tiep
+// theo -> cho man hinh mat khau -> cham o EditText + nhap mat khau -> bam
+// Tiep theo -> cham nut Dong y neu co -> quet lai: con chu XAC MINH thi
+// dung Cho cham tay, khong con thi xong.
+// hooks.park(note): neu duoc cung cap (boi pipeline) thi ham se dung o
+// trang thai waiting_manual cho den khi nguoi dung bam Resume; neu khong
+// co hooks.park thi gap xac minh se tra outcome 'verify' ngay.
+// AN TOAN: acct.password chi nam trong lenh input_text gui qua kenh TCP
+// toi agent; moi log/su kien/ghi chu deu che "********".
+const SIGNIN_VERIFY_NOTE = 'Máy đang ở bước xác minh của Google — xử lý chạm tay trên máy rồi bấm Chạy tiếp';
+
+/** Tim marker dau tien xuat hien trong text/desc cua bat ky node nao. */
+function dumpHasAny(nodes, markers) {
+  for (const n of nodes) {
+    const hay = ((n.text || '') + '\n' + (n.desc || ''));
+    for (const m of markers) {
+      if (m && hay.indexOf(m) >= 0) return m;
+    }
+  }
+  return null;
+}
+
+/** Node o nhap dau tien (className chua "EditText" — khop ca AppCompatEditText). */
+function firstEditText(nodes) {
+  for (const n of nodes) {
+    if (n.className && n.className.indexOf('EditText') >= 0 &&
+        Array.isArray(n.bounds) && n.bounds.length === 4) return n;
+  }
+  return null;
+}
+
+async function dumpUiNodes(deviceId) {
+  try {
+    const res = await sendCommand(deviceId, 'dump_ui', {}, 20000);
+    if (res && res.ok && res.data && Array.isArray(res.data.nodes)) return res.data.nodes;
+  } catch (e) { /* tra null — vong poll se thu lai */ }
+  return null;
+}
+
+/** Poll dump_ui moi ~1,5 giay cho den khi pred(nodes) tra ve gia tri khac null, hoac het timeoutMs. */
+async function pollDumpUntil(deviceId, pred, timeoutMs) {
+  const t0 = Date.now();
+  while (true) {
+    const nodes = await dumpUiNodes(deviceId);
+    if (nodes) {
+      const hit = pred(nodes);
+      if (hit) return { nodes: nodes, hit: hit };
+    }
+    if (Date.now() - t0 >= timeoutMs) return null;
+    await sleepMs(1500);
+  }
+}
+
+/** Cham vao tam o EditText dau tien trong dump. Tra true neu cham duoc. */
+async function tapFirstEditText(deviceId, nodes) {
+  const et = firstEditText(nodes);
+  if (!et) return false;
+  const x = Math.round((et.bounds[0] + et.bounds[2]) / 2);
+  const y = Math.round((et.bounds[1] + et.bounds[3]) / 2);
+  try {
+    const res = await sendCommand(deviceId, 'tap', { x: x, y: y }, 15000);
+    return !!(res && res.ok);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Thu cham lan luot cac marker (tap_text contains); tra marker cham duoc hoac null. */
+async function tapFirstMarker(deviceId, markers) {
+  for (const m of markers) {
+    try {
+      const res = await sendCommand(deviceId, 'tap_text', { text: m, match: 'contains' }, 20000);
+      if (res && res.ok) return m;
+    } catch (e) { /* thu marker tiep theo */ }
+  }
+  return null;
+}
+
+/**
+ * Cua so ~8 giay sau khi bam Tiep theo o man hinh mat khau: neu thay nut
+ * Dong y (dieu khoan) thi cham (dung sai — khong thay cung khong sao).
+ * Thoat som neu qua >= 3 giay ma man hinh khong con bat ky dau chu dang
+ * nhap nao (da qua khoi cac man hinh dang nhap).
+ */
+async function agreeWatch(deviceId, cfg, log) {
+  const windowMs = 8000;
+  const t0 = Date.now();
+  while (Date.now() - t0 < windowMs) {
+    const nodes = await dumpUiNodes(deviceId);
+    if (nodes) {
+      const agree = dumpHasAny(nodes, cfg.agreeButton);
+      if (agree) {
+        const tapped = await tapFirstMarker(deviceId, [agree]);
+        if (tapped) {
+          log('Đã bấm nút đồng ý "' + tapped + '"');
+          await sleepMs(1500);
+          return;
+        }
+      }
+      const anySignin = dumpHasAny(nodes, cfg.emailScreen) || dumpHasAny(nodes, cfg.passwordScreen) ||
+        dumpHasAny(nodes, cfg.verifyMarkers) || dumpHasAny(nodes, cfg.agreeButton);
+      if (!anySignin && (Date.now() - t0) >= 3000) return;
+    }
+    await sleepMs(1200);
+  }
+}
+
+/**
+ * Chay toan bo trinh tu dang nhap Google cho mot may bang tai khoan acct
+ * (acct.password chi di qua kenh agent). Tra ve:
+ *   { outcome: 'done' | 'verify' | 'stopped' | 'error', note, emailTyped, passwordTyped }
+ */
+async function gmailSigninSequence(deviceId, acct, hooks) {
+  hooks = hooks || {};
+  const log = (msg) => {
+    addEvent('gmail_signin', deviceId, msg);
+    if (hooks.log) hooks.log(msg);
+  };
+  const cfg = loadFlowConfig().signin;
+  const out = { outcome: 'error', note: '', emailTyped: false, passwordTyped: false };
+  let res = null;
+
+  // Buoc 2: mo man hinh dang nhap Google
+  try {
+    res = await sendCommand(deviceId, 'open_google_signin', {}, CMD_TIMEOUT_MS);
+  } catch (e) {
+    out.note = 'Không gửi được lệnh mở màn hình đăng nhập Google: ' + (e && e.message || e);
+    return out;
+  }
+  if (!res || !res.ok) {
+    out.note = 'Không mở được màn hình đăng nhập Google: ' + ((res && res.error) || 'unknown');
+    return out;
+  }
+  log('Cấp Gmail tự động: đã mở màn hình đăng nhập Google, chờ ô nhập email...');
+
+  // Buoc 3: cho man hinh nhap email xuat hien (toi da ~25 giay)
+  const emailDump = await pollDumpUntil(deviceId,
+    (nodes) => dumpHasAny(nodes, cfg.emailScreen), 25000);
+  if (!emailDump) {
+    out.note = 'Không thấy màn hình nhập email của Google sau 25 giây (kiểm tra máy / dấu chữ signin.emailScreen trong flow-config.json)';
+    return out;
+  }
+
+  // Buoc 4: cham o email + nhap email
+  if (!await tapFirstEditText(deviceId, emailDump.nodes)) {
+    out.note = 'Không chạm được ô nhập email trên màn hình đăng nhập Google';
+    return out;
+  }
+  await sleepMs(400);
+  try {
+    res = await sendCommand(deviceId, 'input_text', { text: acct.email }, CMD_TIMEOUT_MS);
+  } catch (e) {
+    out.note = 'Không nhập được email: ' + (e && e.message || e);
+    return out;
+  }
+  if (!res || !res.ok) {
+    out.note = 'Không nhập được email: ' + ((res && res.error) || 'unknown');
+    return out;
+  }
+  out.emailTyped = true;
+  log('Đã nhập email ' + acct.email);
+
+  // Buoc 5: bam Tiep theo
+  const nb1 = await tapFirstMarker(deviceId, cfg.nextButton);
+  if (!nb1) {
+    out.note = 'Không thấy nút Tiếp theo ở màn hình nhập email';
+    return out;
+  }
+  log('Đã bấm "' + nb1 + '", chờ màn hình nhập mật khẩu...');
+
+  // Buoc 6: cho man hinh mat khau — hoac man hinh XAC MINH (dung Cho cham tay)
+  let pwDump = null;
+  let resumed6 = false;
+  while (!pwDump) {
+    const r = await pollDumpUntil(deviceId, (nodes) => {
+      if (dumpHasAny(nodes, cfg.verifyMarkers)) return 'verify';
+      if (dumpHasAny(nodes, cfg.passwordScreen) || firstEditText(nodes)) return 'password';
+      return null;
+    }, 25000);
+    if (r && r.hit === 'password') { pwDump = r; break; }
+    if (r && r.hit === 'verify') {
+      log('Google yêu cầu xác minh — dừng chờ chạm tay');
+      if (!hooks.park) { out.outcome = 'verify'; out.note = SIGNIN_VERIFY_NOTE; return out; }
+      const how = await hooks.park(SIGNIN_VERIFY_NOTE);
+      if (how === 'stopped') { out.outcome = 'stopped'; return out; }
+      resumed6 = true;
+      continue;
+    }
+    // Het 25 giay ma khong thay ca hai:
+    if (resumed6) break; // nguoi dung da xu ly tay xong (co the da dang nhap xong) -> sang kiem tra cuoi
+    out.note = 'Không thấy màn hình nhập mật khẩu sau 25 giây';
+    return out;
+  }
+
+  if (pwDump) {
+    // Buoc 7: cham o mat khau + nhap mat khau (CHI qua kenh agent)
+    if (!await tapFirstEditText(deviceId, pwDump.nodes)) {
+      out.note = 'Không chạm được ô nhập mật khẩu';
+      return out;
+    }
+    await sleepMs(400);
+    try {
+      res = await sendCommand(deviceId, 'input_text', { text: acct.password }, CMD_TIMEOUT_MS);
+    } catch (e) {
+      out.note = 'Không nhập được mật khẩu: ' + (e && e.message || e);
+      return out;
+    }
+    if (!res || !res.ok) {
+      out.note = 'Không nhập được mật khẩu: ' + ((res && res.error) || 'unknown');
+      return out;
+    }
+    out.passwordTyped = true;
+    log('Đã nhập mật khẩu ********');
+
+    // Buoc 8: bam Tiep theo
+    const nb2 = await tapFirstMarker(deviceId, cfg.nextButton);
+    if (!nb2) {
+      out.note = 'Không thấy nút Tiếp theo ở màn hình nhập mật khẩu';
+      return out;
+    }
+    log('Đã bấm "' + nb2 + '", chờ Google xử lý...');
+  }
+
+  // Buoc 9+10: vong kiem tra cuoi — cham nut Dong y neu co, quet chu xac
+  // minh; con xac minh thi dung Cho cham tay, Resume thi chay lai vong nay.
+  while (true) {
+    await agreeWatch(deviceId, cfg, log);
+    const nodes = await dumpUiNodes(deviceId);
+    const v = nodes ? dumpHasAny(nodes, cfg.verifyMarkers) : null;
+    if (!v) {
+      out.outcome = 'done';
+      log('✅ Đăng nhập Gmail hoàn tất: ' + acct.email);
+      return out;
+    }
+    log('Google vẫn yêu cầu xác minh (thấy chữ "' + v + '") — dừng chờ chạm tay');
+    if (!hooks.park) { out.outcome = 'verify'; out.note = SIGNIN_VERIFY_NOTE; return out; }
+    const how = await hooks.park(SIGNIN_VERIFY_NOTE);
+    if (how === 'stopped') { out.outcome = 'stopped'; return out; }
+  }
+}
+
+/**
+ * Tao ham park() cho mot buoc pipeline: dat buoc + may vao waiting_manual
+ * va cho POST /api/pipeline/resume (dung lai co che cua buoc "manual").
+ */
+function makePipelinePark(run, dr, step) {
+  return async function (note) {
+    step.status = 'waiting_manual';
+    step.note = note;
+    dr.status = 'waiting_manual';
+    console.log('[pipeline] ' + run.id + ' ' + dr.deviceId + ' CHO CHAM TAY (gmail): ' + note);
+    const how = await new Promise((resolve) => { dr._resumeResolve = resolve; });
+    dr._resumeResolve = null;
+    if (run.stopped || how === 'stopped') return 'stopped';
+    dr.status = 'running';
+    step.status = 'running';
+    step.note = '';
+    return 'resumed';
+  };
+}
+
 // ================= Pipeline engine =================
 // Buoc (step) co cac loai: command | wait | manual | assign_gmail
 // Moi may chay tuan tu cac buoc cua minh; cac may chay song song.
@@ -388,14 +697,31 @@ const TIKTOK_PKG = 'com.zhiliaoapp.musically.go';
 
 const PIPELINES = [
   {
+    // Giai doan 3.1: buoc cap Gmail (withSignin) chay luon trinh tu dang
+    // nhap Google TU DONG bang tai khoan vua cap — chi dung "Cho cham
+    // tay" ngay trong buoc do khi Google bat xac minh. Buoc manual cuoi
+    // van giu: nguoi dung mo may kiem tra lai + dang nhap TikTok Lite.
     id: 'cap-may-moi',
     name: 'Cấp máy mới (Gmail → LINE → TikTok Lite)',
     steps: [
-      { type: 'assign_gmail', name: 'Cấp Gmail từ kho cho máy' },
+      { type: 'assign_gmail', withSignin: true, name: 'Cấp Gmail từ kho + tự đăng nhập Google' },
       { type: 'command', cmd: 'install_url', paramKey: 'lineApkUrl', name: 'Cài LINE' },
       { type: 'command', cmd: 'install_url', paramKey: 'tiktokApkUrl', name: 'Cài TikTok Lite' },
       { type: 'command', cmd: 'open_app', args: { 'package': 'com.zhiliaoapp.musically.go' }, name: 'Mở TikTok Lite' },
-      { type: 'manual', name: 'Đăng nhập Google / xử lý CAPTCHA nếu có (chạm tay)' }
+      { type: 'manual', name: 'Kiểm tra trên máy: đăng nhập TikTok Lite / xử lý CAPTCHA nếu còn (chạm tay)' }
+    ]
+  },
+  {
+    // Cap Gmail TU DONG (Giai doan 3.1) — dung cho nut "Cap Gmail" tren
+    // the may: cap tai khoan tu kho (may da co tai khoan duoc cap thi
+    // dung lai, khong ton them tai khoan moi) roi TU dang nhap Google
+    // theo trinh tu gmailSigninSequence. Chi dung Cho cham tay khi
+    // Google bat xac minh (CAPTCHA / ma dien thoai / 2 buoc).
+    id: 'cap-gmail-tu-dong',
+    name: 'Cấp Gmail tự động (tự đăng nhập Google)',
+    steps: [
+      { type: 'assign_gmail', reuseAssigned: true, name: 'Cấp Gmail từ kho cho máy' },
+      { type: 'gmail_signin', name: 'Tự đăng nhập Google bằng Gmail vừa cấp' }
     ]
   },
   {
@@ -492,6 +818,10 @@ function buildSteps(pipeline, params) {
       st.minutes = s.minutes || 30;
       st.gameUrl = s.gameUrl || '';
     }
+    if (s.type === 'assign_gmail') {
+      st.withSignin = !!s.withSignin;
+      st.reuseAssigned = !!s.reuseAssigned;
+    }
     return st;
   });
 }
@@ -528,16 +858,72 @@ async function runDevicePipeline(run, dr) {
     try {
       if (step.type === 'assign_gmail') {
         step.status = 'running';
-        const res = assignGmail(dr.deviceId);
-        if (res.error) {
+        // reuseAssigned (flow cap-gmail-tu-dong): may da co tai khoan
+        // duoc cap thi dung lai tai khoan do, khong cap them tai khoan moi.
+        let acct = step.reuseAssigned ? findAccountForDevice(dr.deviceId) : null;
+        if (acct) {
+          step.note = 'Dùng Gmail đã cấp cho máy: ' + acct.email;
+        } else {
+          const res = assignGmail(dr.deviceId);
+          if (res.error) {
+            step.status = 'error';
+            step.note = 'Kho Gmail hết tài khoản sẵn sàng (pool_empty)';
+            dr.status = 'error';
+            console.log('[pipeline] ' + run.id + ' ' + devLabel + ' assign_gmail: pool_empty');
+            return;
+          }
+          acct = res.account;
+          step.note = 'Đã cấp: ' + acct.email;
+        }
+        dr._gmailAccount = acct;
+        step.status = 'done';
+        // withSignin (pipeline cap-may-moi): chay luon trinh tu dang nhap
+        // Google tu dong bang tai khoan vua cap, ngay trong buoc nay.
+        if (step.withSignin) {
+          step.status = 'running';
+          const out = await gmailSigninSequence(dr.deviceId, acct, { park: makePipelinePark(run, dr, step) });
+          if (out.outcome === 'stopped') {
+            step.status = 'stopped';
+            dr.status = 'stopped';
+            return;
+          }
+          if (out.outcome !== 'done') {
+            step.status = 'error';
+            step.note = (step.note ? step.note + ' · ' : '') + 'Tự đăng nhập Google chưa xong: ' + (out.note || out.outcome);
+            dr.status = 'error';
+            console.log('[pipeline] ' + run.id + ' ' + devLabel + ' assign_gmail+signin: ' + step.note);
+            return;
+          }
+          step.status = 'done';
+          step.note = (step.note ? step.note + ' · ' : '') + 'Đã tự đăng nhập Google';
+        }
+      } else if (step.type === 'gmail_signin') {
+        // Trinh tu dang nhap Google tu dong bang tai khoan da cap cho may
+        // (buoc assign_gmail truoc do, hoac tai khoan da cap tu truoc).
+        step.status = 'running';
+        const acct = dr._gmailAccount || findAccountForDevice(dr.deviceId);
+        if (!acct) {
           step.status = 'error';
-          step.note = 'Kho Gmail hết tài khoản sẵn sàng (pool_empty)';
+          step.note = 'Máy chưa được cấp Gmail — chạy bước cấp Gmail trước';
           dr.status = 'error';
-          console.log('[pipeline] ' + run.id + ' ' + devLabel + ' assign_gmail: pool_empty');
+          console.log('[pipeline] ' + run.id + ' ' + devLabel + ' gmail_signin: chua co tai khoan');
+          return;
+        }
+        const out = await gmailSigninSequence(dr.deviceId, acct, { park: makePipelinePark(run, dr, step) });
+        if (out.outcome === 'stopped') {
+          step.status = 'stopped';
+          dr.status = 'stopped';
+          return;
+        }
+        if (out.outcome !== 'done') {
+          step.status = 'error';
+          step.note = 'Tự đăng nhập Google chưa xong: ' + (out.note || out.outcome);
+          dr.status = 'error';
+          console.log('[pipeline] ' + run.id + ' ' + devLabel + ' gmail_signin: ' + step.note);
           return;
         }
         step.status = 'done';
-        step.note = 'Đã cấp: ' + res.account.email;
+        step.note = 'Đã tự đăng nhập Google: ' + acct.email;
       } else if (step.type === 'command') {
         step.status = 'running';
         const timeout = (step.cmd === 'install_url') ? 120000 : CMD_TIMEOUT_MS;
@@ -1034,10 +1420,16 @@ const httpServer = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'POST' && u.pathname === '/api/gmail/signin-assist') {
-      // Ho tro dang nhap Google: lay tai khoan da cap cho may (chua co thi cap
-      // moi), roi day email + password QUA KENH LENH TCP toi agent bang lenh
-      // input_text. API nay chi tra email + password da che — password that
-      // khong bao gio nam trong response HTTP / dashboard.
+      // Giai doan 3.1: endpoint nay UY QUYEN cho trinh tu dang nhap Google
+      // TU DONG (gmailSigninSequence): tu mo man hinh dang nhap, tu nhap
+      // email + mat khau qua kenh lenh TCP toi agent, tu bam Tiep theo.
+      // Dang response van giu nguyen nhu Giai doan 2:
+      // {ok, email, passwordMasked, deviceId, steps:[{step:'email'},{step:'password'}]}
+      // — password that khong bao gio nam trong response HTTP / dashboard.
+      // Khac biet: neu Google bat XAC MINH (CAPTCHA/SDT/2 buoc) thi endpoint
+      // khong the dung cho (no la request dong bo) — tra ok=false,
+      // outcome='verify'; khi do hay dung nut "Cap Gmail" tren the may /
+      // pipeline "cap-gmail-tu-dong" de dung o Cho cham tay roi chay tiep.
       let j;
       try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
       if (!j.deviceId) { jsonRes(res, 400, { ok: false, error: 'missing_deviceId' }); return; }
@@ -1047,28 +1439,21 @@ const httpServer = http.createServer(async (req, res) => {
         if (r.error) { jsonRes(res, 200, { ok: false, error: r.error }); return; }
         acct = r.account;
       }
-      const steps = [];
-      try {
-        const r1 = await sendCommand(j.deviceId, 'input_text', { text: acct.email });
-        steps.push({ step: 'email', ok: !!(r1 && r1.ok), error: (r1 && r1.error) || null });
-      } catch (e) {
-        steps.push({ step: 'email', ok: false, error: e.message });
-      }
-      if (steps[0].ok) {
-        try {
-          const r2 = await sendCommand(j.deviceId, 'input_text', { text: acct.password });
-          steps.push({ step: 'password', ok: !!(r2 && r2.ok), error: (r2 && r2.error) || null });
-        } catch (e) {
-          steps.push({ step: 'password', ok: false, error: e.message });
-        }
-      }
+      const out = await gmailSigninSequence(j.deviceId, acct, {});
+      const steps = [
+        { step: 'email', ok: !!out.emailTyped, error: out.emailTyped ? null : (out.note || 'not_typed') },
+        { step: 'password', ok: !!out.passwordTyped, error: out.passwordTyped ? null : (out.note || 'not_typed') }
+      ];
       jsonRes(res, 200, {
-        ok: steps.every((s) => s.ok),
+        ok: out.outcome === 'done',
+        outcome: out.outcome,
         email: acct.email,
         passwordMasked: '********',
         deviceId: j.deviceId,
         steps: steps,
-        note: 'Nếu máy đang ở ô email, sau bước 1 cần chạm "Tiếp theo" trên máy để sang ô mật khẩu rồi chạy lại bước 2 — hoặc dùng pipeline có bước Chờ chạm tay.'
+        note: out.outcome === 'done'
+          ? 'Đã tự đăng nhập Google xong: máy tự mở màn hình đăng nhập, nhập email + mật khẩu và bấm Tiếp theo.'
+          : (out.note || '')
       });
       return;
     }

@@ -262,7 +262,7 @@ public class AgentService extends Service {
         o.put("sdk", Build.VERSION.SDK_INT);
         o.put("androidId", androidId());
         o.put("battery", batteryLevel());
-        o.put("agentVersion", "3.0");
+        o.put("agentVersion", "3.1");
         o.put("deviceOwner", isDeviceOwner(this));
         o.put("accessibility", FarmAccessibilityService.isRunning());
         return o;
@@ -364,6 +364,33 @@ public class AgentService extends Service {
                 startActivity(launch);
                 JSONObject d = new JSONObject();
                 d.put("opened", pkg);
+                r.put("ok", true);
+                r.put("data", d);
+                return r;
+            }
+            case "open_google_signin": {
+                // Mo thang man hinh "them tai khoan Google" cua Android —
+                // dung cho quy trinh Cap Gmail tu dong (Giai doan 3.1).
+                // Khong can Tro nang: day chi la startActivity thong thuong.
+                try {
+                    Intent gi = new Intent("android.settings.ADD_ACCOUNT_SETTINGS");
+                    gi.putExtra(Settings.EXTRA_ACCOUNT_TYPES, new String[]{"com.google"});
+                    gi.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(gi);
+                } catch (Exception e1) {
+                    // Thu lai khong kem extra (mot so ROM cat bot)
+                    try {
+                        Intent gi2 = new Intent("android.settings.ADD_ACCOUNT_SETTINGS");
+                        gi2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(gi2);
+                    } catch (Exception e2) {
+                        r.put("ok", false);
+                        r.put("error", "no_activity");
+                        return r;
+                    }
+                }
+                JSONObject d = new JSONObject();
+                d.put("opened", "google_signin");
                 r.put("ok", true);
                 r.put("data", d);
                 return r;

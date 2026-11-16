@@ -1,7 +1,9 @@
-// fake-agent.js — May test ao cho Farm Control Giai doan 3.
+// fake-agent.js — May test ao cho Farm Control Giai doan 3.1.
 // Ket noi TCP vao server nhu mot dien thoai that, gui hello + heartbeat,
 // tra loi cac lenh co ban + lenh Giai doan 2 (tap/swipe/input_text/key/
-// factory_reset) + lenh Giai doan 3 (dump_ui/tap_text/wait_text/open_url).
+// factory_reset) + lenh Giai doan 3 (dump_ui/tap_text/wait_text/open_url)
+// + lenh Giai doan 3.1 (open_google_signin) kem MAY TRANG THAI man hinh
+// dang nhap Google (email -> password -> done/verify) cho dump_ui.
 // Dung de kiem chung server + dashboard + giao thuc ma khong can dien
 // thoai that.
 // Chay: node fake-agent.js [host] [port]   (mac dinh 127.0.0.1:8787)
@@ -11,9 +13,21 @@
 //   FAKE_ACCESSIBILITY=0 -> status bao accessibility:false, lenh thao tac tra loi no_accessibility
 //                           (mac dinh: accessibility:true)
 //   FAKE_NO_FOCUS=1      -> input_text tra loi no_focus
-//   FAKE_CHECKIN_AFTER=n -> tu lan dump_ui thu n tro di, trong danh sach node
-//                           xuat hien chu "チェックイン完了" (mo phong man
-//                           hinh bao check-in thanh cong cho vong xem game)
+//   FAKE_CHECKIN_AFTER=n -> tu lan dump_ui MAN HINH TIKTOK thu n tro di,
+//                           trong danh sach node xuat hien chu
+//                           "チェックイン完了" (mo phong man hinh bao
+//                           check-in thanh cong cho vong xem game). Luu y:
+//                           chi dump o man hinh TikTok moi dem — dump o cac
+//                           man hinh dang nhap Google khong tinh, de trinh
+//                           tu dang nhap khong lam lech bo dem check-in.
+//   FAKE_VERIFY=1        -> sau khi nhap mat khau + bam Tiep theo, man
+//                           hinh dang nhap chuyen sang trang thai "verify"
+//                           (本人確認 / 確認コード) thay vi "done" — mo phong
+//                           Google bat xac minh, flow phai dung Cho cham tay.
+// Debug: fake ghi lai cac lenh da nhan vao cmdLog (input_text o man hinh
+// email ghi "input_text(email):<email>", o man hinh mat khau ghi
+// "input_text(password):********" — khong bao gio ghi mat khau that).
+// Doc cmdLog qua lenh status: POST /api/cmd {cmd:"status"} -> data.cmdLog.
 'use strict';
 const net = require('net');
 
@@ -24,7 +38,20 @@ const IS_DEVICE_OWNER = process.env.FAKE_DEVICE_OWNER === '1';
 const HAS_ACCESSIBILITY = process.env.FAKE_ACCESSIBILITY !== '0';
 const NO_FOCUS = process.env.FAKE_NO_FOCUS === '1';
 const CHECKIN_AFTER = process.env.FAKE_CHECKIN_AFTER ? parseInt(process.env.FAKE_CHECKIN_AFTER, 10) : 0;
-let dumpCount = 0;
+const FAKE_VERIFY = process.env.FAKE_VERIFY === '1';
+let dumpCount = 0; // chi dem dump_ui o man hinh TikTok (phuc vu FAKE_CHECKIN_AFTER)
+// May trang thai man hinh dang nhap Google (Giai doan 3.1):
+//   none -> (open_google_signin) -> email -> (nhap email + cham 次へ) ->
+//   password -> (nhap mat khau + cham 次へ) -> done (hoac verify neu FAKE_VERIFY=1)
+// open_app (mo app khac) dua trang thai ve none — nhu may that roi khoi
+// man hinh dang nhap khi mo app khac.
+let signinState = 'none';
+// Nhat ky lenh da nhan (debug cho script kiem chung) — xem ghi chu dau file.
+const cmdLog = [];
+function logCmd(entry) {
+  cmdLog.push(entry);
+  while (cmdLog.length > 500) cmdLog.shift();
+}
 // Anh JPEG 8x8 hop le (tao san), chi de chung minh duong truyen anh hoat dong.
 const TINY_JPEG_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD02iiiu44T/9k=';
 
@@ -91,9 +118,9 @@ function result(id, ok, error, data) {
 }
 
 // Danh sach node gia lap cua "man hinh TikTok Lite" — dung cho dump_ui /
-// tap_text / wait_text. Khi FAKE_CHECKIN_AFTER dat va so lan dump_ui da
-// dat nguong, node bao check-in thanh cong xuat hien (nhu man hinh that
-// sau khi heo nhay).
+// tap_text / wait_text. Khi FAKE_CHECKIN_AFTER dat va so lan dump_ui o
+// man hinh nay da dat nguong, node bao check-in thanh cong xuat hien
+// (nhu man hinh that sau khi heo nhay).
 function fakeNodes() {
   const nodes = [
     { text: 'TikTok Lite', desc: '', className: 'android.widget.TextView', bounds: [24, 80, 500, 140], clickable: false },
@@ -109,8 +136,51 @@ function fakeNodes() {
   return nodes;
 }
 
+// Cac man hinh dang nhap Google gia lap (Giai doan 3.1) — dung khi
+// signinState khac 'none'. Moi man hinh co dung cac dau chu trong muc
+// "signin" cua flow-config.json + mot o EditText + nut 次へ.
+function signinNodes() {
+  if (signinState === 'email') {
+    return [
+      { text: 'Google', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: 'ログイン', desc: '', className: 'android.widget.TextView', bounds: [80, 300, 1000, 380], clickable: false },
+      { text: 'メールアドレスまたは電話番号', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
+      { text: '', desc: 'メールアドレスまたは電話番号', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
+    ];
+  }
+  if (signinState === 'password') {
+    return [
+      { text: 'Google', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: 'ようこそ', desc: '', className: 'android.widget.TextView', bounds: [80, 300, 1000, 380], clickable: false },
+      { text: 'パスワード', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
+      { text: '', desc: 'パスワード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
+    ];
+  }
+  if (signinState === 'verify') {
+    return [
+      { text: 'Google', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: '本人確認', desc: '', className: 'android.widget.TextView', bounds: [80, 300, 1000, 380], clickable: false },
+      { text: '確認コードを入力してください', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
+      { text: '', desc: '確認コード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
+    ];
+  }
+  // done: da dang nhap xong — man hinh "home", khong con dau chu dang nhap
+  return [
+    { text: 'ホーム', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+    { text: '設定', desc: '', className: 'android.widget.TextView', bounds: [80, 400, 1000, 480], clickable: true }
+  ];
+}
+
+/** Node cua man hinh hien tai: dang o man hinh dang nhap thi tra node dang nhap. */
+function currentNodes() {
+  return signinState !== 'none' ? signinNodes() : fakeNodes();
+}
+
 function findFakeNode(text, match) {
-  const nodes = fakeNodes();
+  const nodes = currentNodes();
   for (const n of nodes) {
     const cands = [n.text || '', n.desc || ''];
     for (const c of cands) {
@@ -124,16 +194,28 @@ function findFakeNode(text, match) {
 function handleCmd(msg) {
   const args = msg.args || {};
   console.log('[fake-agent] nhan lenh:', msg.cmd, JSON.stringify(args));
+  // Ghi nhat ky lenh (debug): input_text/tap_text ghi chi tiet khi thanh
+  // cong (o cac nhanh rieng ben duoi), cac lenh con lai ghi theo ten.
+  if (msg.cmd !== 'input_text' && msg.cmd !== 'tap_text') logCmd(msg.cmd);
   switch (msg.cmd) {
     case 'status':
       result(msg.id, true, null, {
         battery: battery, charging: false, network: 'wifi', screenOn: true,
         label: 'Máy test ảo', model: 'Xperia XZ2 (fake)', android: '10',
-        deviceOwner: IS_DEVICE_OWNER, accessibility: HAS_ACCESSIBILITY
+        deviceOwner: IS_DEVICE_OWNER, accessibility: HAS_ACCESSIBILITY,
+        signinState: signinState,
+        cmdLog: cmdLog.slice()
       });
       break;
     case 'open_app':
+      // Mo app khac = roi khoi man hinh dang nhap Google (neu dang o do)
+      signinState = 'none';
       result(msg.id, true, null, { opened: args['package'] || '' });
+      break;
+    case 'open_google_signin':
+      // Mo man hinh dang nhap Google — khong can Tro nang (giong agent that)
+      signinState = 'email';
+      result(msg.id, true, null, { opened: 'google_signin' });
       break;
     case 'wake':
       result(msg.id, true, null, { awake: true });
@@ -159,6 +241,11 @@ function handleCmd(msg) {
     case 'input_text':
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
       if (NO_FOCUS) { result(msg.id, false, 'no_focus', null); break; }
+      // Ghi nhat ky theo man hinh dang nhap: email ghi ro (khong nhay cam),
+      // mat khau CHI ghi dang che — khong bao gio ghi mat khau that.
+      if (signinState === 'email') logCmd('input_text(email):' + (args.text || ''));
+      else if (signinState === 'password') logCmd('input_text(password):********');
+      else logCmd('input_text:' + (args.text || ''));
       result(msg.id, true, null, { typedLength: (args.text || '').length });
       break;
     case 'key':
@@ -167,6 +254,13 @@ function handleCmd(msg) {
       break;
     case 'dump_ui': {
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
+      // Dang o man hinh dang nhap Google: tra node dang nhap, KHONG dem
+      // vao bo dem check-in (chi dump o man hinh TikTok moi dem).
+      if (signinState !== 'none') {
+        const sn = signinNodes();
+        result(msg.id, true, null, { nodes: sn, count: sn.length });
+        break;
+      }
       dumpCount++;
       const nodes = fakeNodes();
       result(msg.id, true, null, { nodes: nodes, count: nodes.length });
@@ -176,6 +270,14 @@ function handleCmd(msg) {
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
       const hit = findFakeNode(args.text || '', args.match || 'contains');
       if (!hit) { result(msg.id, false, 'text_not_found', null); break; }
+      logCmd('tap_text:' + (args.text || ''));
+      // May trang thai dang nhap: cham nut 次へ thi chuyen man hinh
+      const hitText = (hit.text || '') + (hit.desc || '');
+      if (hitText.indexOf('次へ') >= 0) {
+        if (signinState === 'email') signinState = 'password';
+        else if (signinState === 'password') signinState = FAKE_VERIFY ? 'verify' : 'done';
+        // o 'verify' thi cham 次へ van o lai verify (chua nhap ma thi chua qua)
+      }
       result(msg.id, true, null, {
         tapped: true,
         text: hit.text || hit.desc || '',

@@ -1,16 +1,1 @@
-{
-  "onboardingMarkers": [
-    "同意する",
-    "許可する",
-    "スキップ",
-    "次へ",
-    "登録",
-    "ログイン"
-  ],
-  "checkinSuccessMarkers": [
-    "チェックイン完了",
-    "チェックイン成功",
-    "ポイントを獲得しました",
-    "付与されました"
-  ]
-}
+{"checkinSuccessMarkers":["チェックイン完了","チェックイン成功","ポイントを獲得しました","付与されました"],"onboardingMarkers":["同意する","許可する","スキップ","次へ","登録","ログイン"],"signin":{"agreeButton":["同意します","I agree"],"emailScreen":["メールアドレスまたは電話番号","メールアドレス","Email or phone"],"nextButton":["次へ","Next"],"passwordScreen":["パスワード","Password"],"verifyMarkers":["本人確認","確認コード","セキュリティコード","電話番号を入力","ロボットではありません","2段階認証"]}}
