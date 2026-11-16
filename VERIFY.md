@@ -534,3 +534,112 @@ LƯU Ý: kiểm chứng trên vẫn là với fake agent — nhưng fake agent
 lần này mô phỏng đúng hiện tượng đã quan sát trên máy thật (ô nhập
 chưa kịp focus ở những lần input_text đầu tiên). Cần chạy lại flow
 Cấp Gmail trên máy SOV37 thật (bản 3.2.2) để xác nhận dứt điểm.
+
+---
+
+## Giai đoạn 3.2.3 (hotfix, 2026-11-16) — nhận nhầm màn hình email là màn hình mật khẩu + vòng lặp thử lại theo bước nhập
+
+### Bằng chứng máy thật (Sony SOV37, chạy bản 3.2.2, ~22:07–22:10)
+
+- Ảnh chụp tab Kho dữ liệu: kho Gmail có đúng 1 tài khoản, email
+  đầy đủ và đúng (LilyCreightonwugwb@alazlyc.org), trạng thái
+  "Đã cấp" cho máy SOV37, mật khẩu hiển thị dạng che — **dữ liệu
+  kho hoàn toàn đúng**.
+- Ảnh chụp điện thoại cùng lúc: ô **EMAIL** của màn hình đăng nhập
+  Google (nhãn メールアドレスまたは電話番号） lại chứa chuỗi
+  "Phat3479" — tức **mật khẩu của tài khoản đã bị gõ vào ô email**.
+
+### Chẩn đoán
+
+Màn hình đăng nhập Google là WebView/DOM: cây `dump_ui` có thể
+chứa sẵn chữ của bước mật khẩu (node DOM ẩn "パスワード") ngay cả
+khi đang ở bước email. Cách nhận diện cũ ở bước chờ màn hình mật
+khẩu — "có marker passwordScreen **HOẶC có bất kỳ ô EditText nào**
+thì coi là màn hình mật khẩu" — khiến nhánh mật khẩu thắng ngay
+trên màn hình email; `input_text` (SET_TEXT) liền ghi mật khẩu đè
+lên ô nhập duy nhất đang hiện, chính là ô email.
+
+### Cách sửa (chỉ server/server.js — agent và flow-config KHÔNG đổi)
+
+1. **Phân loại màn hình NGHIÊM NGẮT** (`classifySigninScreen` /
+   `classifyTiktokScreen`): có bất kỳ marker emailScreen
+   (usernameScreen) nào → màn hình EMAIL (ưu tiên tuyệt đối); chỉ
+   khi KHÔNG có marker email mà có marker passwordScreen mới là
+   màn hình MẬT KHẨU. Áp dụng nhất quán ở mọi điểm phân loại:
+   chờ màn hình đầu, chờ sau khi bấm Tiếp theo, và đường Resume.
+   Bỏ hẳn điều kiện "hoặc có ô EditText" ở các bước chờ màn hình
+   mật khẩu (Google + TikTok).
+2. **Xác minh sau khi nhập + canh gác bước mật khẩu**: sau khi
+   nhập email/username phải thấy đúng chuỗi vừa nhập trong
+   text/desc của một node; trước khi gõ mật khẩu, dump của vòng
+   hiện tại bắt buộc phân loại là 'password'; sau khi gõ mật khẩu
+   phải có một ô EditText đang chứa text (chỉ kiểm tra có/không,
+   không ghi lại nội dung).
+3. **Vòng lặp THỬ LẠI theo bước nhập** (điều chỉnh theo yêu cầu
+   người dùng, thay cho cơ chế "dừng ngay khi không khớp" phác
+   thảo ban đầu): mỗi bước nhập (email + mật khẩu Google, tài
+   khoản + mật khẩu TikTok) là một vòng lặp — phân loại lại màn
+   hình → chạm ô → nghỉ ~800ms → nhập (helper 3.2.2) → xác minh →
+   bấm nút chuyển bước (helper 3.2.1) → kiểm tra trang đã chuyển
+   chưa. Chưa chuyển thì nghỉ **~5 giây** rồi làm lại cả bước,
+   tối đa **~5 phút/bước**; hết giờ bước lỗi với ghi chú "Đã thử
+   nhập lại nhiều lần trong 5 phút nhưng trang chưa chuyển —
+   kiểm tra máy/mạng". Nhập lại an toàn vì input_text ghi đè nội
+   dung ô. Thấy chữ **xác minh ở bất kỳ đâu thì dừng Chờ chạm
+   tay NGAY** — vòng lặp không bao giờ cố vượt qua xác minh. Run
+   bị Stop thì thoát ngay với outcome 'stopped' (hooks.isStopped
+   được nối từ run.stopped ở cả 3 điểm gọi pipeline; việc ngủ chờ
+   giữa các vòng cũng thức dậy sớm khi Stop). Nhật ký giữ gọn:
+   tối đa 1 sự kiện thử-lại mỗi vòng.
+   - Trường hợp giữ nguyên xử lý của 3.2.2: lỗi đến từ chính lệnh
+     nhập sau khi helper đã thử 6 lần (điển hình no_focus vĩnh
+     viễn — ô không nhận được focus) thì bước lỗi ngay với ghi
+     chú lỗi nhập cũ ("Không nhập được email: no_focus"), vì làm
+     lại cả bước trong tình trạng đó không thay đổi được gì và
+     bộ kiểm chứng 3.2.2 đã khoá hành vi này.
+
+### Fake agent — mô phỏng thêm
+
+- Env mới `FAKE_SIGNIN_BOTH_MARKERS=1`: dump ở màn hình email
+  Google có thêm node ẩn text "パスワード" (bounds rỗng) — mô
+  phỏng DOM ẩn của WebView trên máy thật.
+- Env mới `FAKE_DROP_FIRST_INPUT=1`: lần `input_text` thành
+  công đầu tiên trên màn hình email Google không "dính" (lệnh
+  vẫn ok, cmdLog vẫn ghi, nhưng ô vẫn trống) — mô phỏng nhập
+  "rớt" trên máy thật.
+- Ô nhập nay **giữ lại nội dung đã nhập** trong dump_ui (email /
+  username: text thật; mật khẩu: chuỗi dấu "•" như Android thật)
+  để server xác minh sau-khi-nhập được như trên máy thật.
+
+### Kết quả kiểm chứng (fake agent, vòng kín)
+
+**verify-stage323.js (mới): 25 PASS, 0 FAIL**, gồm:
+
+- (a) Với FAKE_SIGNIN_BOTH_MARKERS=1, flow cap-gmail-tu-dong vẫn
+  `done`; cmdLog đúng thứ tự `open_google_signin →
+  input_text(email) → tap_text:次へ → input_text(password):********
+  → tap_text:次へ`; **input_text đầu tiên mang email** (hết lỗi gõ
+  sai trường); mật khẩu chỉ được gõ sau lần bấm Tiếp theo đầu
+  tiên; đường vui chỉ có đúng 1 vòng nhập (không có sự kiện
+  thử-lại nào).
+- (b) Không đặt env: flow vẫn `done`, đúng thứ tự lệnh như trước.
+- (d) Với FAKE_DROP_FIRST_INPUT=1: lần nhập email đầu bị "rớt",
+  flow **tự nhập lại (đúng 2 lần input_text(email) trong
+  cmdLog)**, có sự kiện thử-lại của bước email, và vẫn `done` —
+  vòng lặp thử lại cứu được ca nhập rớt mà bản cũ sẽ dừng lỗi.
+- (c) Quét toàn bộ thân mọi response API trong phiên +
+  /api/events: mật khẩu thử (2 tài khoản) KHÔNG xuất hiện ở đâu.
+- Chạy thêm verify-stage323.js trên bản server ĐÃ ĐÓNG GÓI trong
+  thư mục giao hàng (farm-agent-giai-doan-3-2-3): 25 PASS, 0 FAIL.
+
+**Chạy lại hồi quy: verify-stage2.js 38 PASS, 0 FAIL;
+verify-stage3.js 41 PASS, 0 FAIL; verify-stage31.js 29 PASS,
+0 FAIL; verify-stage32.js 54 PASS, 0 FAIL; verify-stage321.js
+18 PASS, 0 FAIL; verify-stage322.js 16 PASS, 0 FAIL** — đúng
+nguyên số đếm trước hotfix, không hồi quy.
+
+LƯU Ý: kiểm chứng vẫn bằng fake agent — nhưng fake nay mô phỏng
+đúng cả hai hiện tượng máy thật đã gặp (DOM ẩn chứa marker bước
+mật khẩu ngay ở bước email, và lần nhập đầu bị "rớt"). Cần chạy
+lại flow Cấp Gmail trên máy SOV37 thật (bản 3.2.3) để xác nhận
+dứt điểm.

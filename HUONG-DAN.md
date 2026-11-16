@@ -1,5 +1,44 @@
 # Farm Control — Giai đoạn 3.2: Hướng dẫn
 
+> **BẢN 3.2.3 (hotfix, 2026-11-16)** — Sửa lỗi NGUY HIỂM gặp trên
+> máy thật (Sony SOV37) khi chạy bản 3.2.2: kho Gmail hoàn toàn
+> đúng (email đầy đủ, đã cấp cho máy), nhưng flow lại **gõ mật
+> khẩu vào ô email** trên màn hình đăng nhập Google. Nguyên
+> nhân: màn hình đăng nhập Google là WebView — cây màn hình máy
+> trả về đã chứa sẵn chữ của bước mật khẩu (node ẩn "パスワード")
+> ngay khi đang ở bước email, khiến bản cũ nhận nhầm màn hình
+> email là màn hình mật khẩu. Bản 3.2.3 **phân loại màn hình
+> nghiêm ngặt**: thấy dấu chữ của bước email là tính bước email
+> (ưu tiên tuyệt đối), mật khẩu chỉ được gõ khi màn hình chắc
+> chắn là bước mật khẩu, và sau mỗi lần nhập server **kiểm tra
+> lại giá trị vừa nhập có thật trên màn hình không**.
+>
+> Thêm nữa, theo yêu cầu của huynh, mỗi bước nhập (email + mật
+> khẩu Google, tài khoản + mật khẩu TikTok Lite) nay **tự thử
+> lại sau ~5 giây cho tới khi chuyển trang** (tối đa ~5
+> phút/bước): nhập "rớt", trang chưa chuyển, chưa thấy nút bấm
+> — đều tự làm lại cả bước thay vì dừng lỗi như trước. Riêng
+> khi Google/TikTok **đòi xác minh** (mã xác nhận / CAPTCHA)
+> thì máy vẫn **dừng ngay ở "Chờ chạm tay"** như cũ — vòng lặp
+> không bao giờ cố vượt qua bước xác minh. Marker nhận diện
+> KHÔNG đổi; app Farm Agent KHÔNG đổi (vẫn v3.1, không cần
+> cài lại).
+>
+> **Cách cập nhật lên 3.2.3:** (1) Dừng server cũ (Ctrl+C trong
+> cửa sổ Terminal đang chạy server). (2) Giải nén gói 3.2.3.
+> (3) Chép **toàn bộ file trong thư mục `data/` của server cũ**
+> (bản đang dùng) đè sang thư mục `data/` của server 3.2.3 — để
+> giữ kho Gmail, kho heo, link game và tiến độ điểm danh.
+> (4) Vào thư mục `server` của bản 3.2.3 và chạy
+> `node server.js`.
+>
+> **⚠️ QUAN TRỌNG: sau khi chép file `data/` xong và chạy
+> server mới, hãy mở tab "Kho dữ liệu" trên trang điều khiển
+> và KIỂM TRA kho Gmail / kho heo đã hiện đúng tài khoản của
+> huynh CHƯA, rồi mới chạy bất cứ tác vụ nào.** (Bản 3.2.2 đã
+> có lần chạy với kho trống vì sót bước chép file — kiểm tra
+> 10 giây ở đây tránh mất cả buổi test.)
+
 > **BẢN 3.2.2 (hotfix, 2026-11-16)** — Sửa lỗi gặp tiếp trên máy
 > thật (Sony SOV37) khi chạy bản 3.2.1: flow "Cấp Gmail tự động" mở
 > được màn hình đăng nhập Google nhưng báo "Không nhập được email:

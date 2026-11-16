@@ -44,6 +44,28 @@
 //                           mo phong dung loi may that (nut hien tren
 //                           man hinh nhung cay accessibility chua kip
 //                           lo node nut). Flow phai quet lai moi thay.
+//   FAKE_SIGNIN_BOTH_MARKERS=1 -> (Hotfix 3.2.3) dump_ui o man hinh
+//                           EMAIL cua dang nhap Google co them mot
+//                           node an chua chu "パスワード" (mo phong
+//                           DOM an cua WebView dang nhap Google tren
+//                           may that — cay dump chua san chu cua buoc
+//                           mat khau ngay ca khi dang o buoc email,
+//                           khien ban cu nhan nham man hinh va go mat
+//                           khau vao o email). Flow phai phan loai
+//                           nghiem ngat: marker email thang tuyet doi.
+//   FAKE_DROP_FIRST_INPUT=1 -> (Hotfix 3.2.3, ban dieu chinh) lan
+//                           input_text THANH CONG dau tien tren man
+//                           hinh EMAIL cua dang nhap Google KHONG
+//                           "dinh" — o van trong, dump_ui van thay o
+//                           trong (mo phong nhap "rot" tren may
+//                           that). Lenh van tra ok va van ghi cmdLog
+//                           binh thuong. Flow phai tu nhap LAI ca
+//                           buoc email (vong lap thu lai) moi xong.
+// Mo phong o nhap (Hotfix 3.2.3): sau khi input_text thanh cong, o
+// EditText cua man hinh hien tai GIU LAI noi dung da nhap trong
+// dump_ui (man hinh email/username: text that; man hinh mat khau:
+// chuoi dau cham "•" nhu Android that hien) — de server xac minh
+// sau-khi-nhap qua dump_ui dung nhu tren may that.
 // Lenh 'tap' theo toa do: neu diem cham nam trong bounds cua mot node
 // thi mo phong nhu cham vao node do (chuyen man hinh giong tap_text);
 // rieng cham vao nut (Button) co chu thi cmdLog ghi them dong
@@ -74,6 +96,17 @@ const CHECKIN_AFTER = process.env.FAKE_CHECKIN_AFTER ? parseInt(process.env.FAKE
 const FAKE_VERIFY = process.env.FAKE_VERIFY === '1';
 const FAKE_TT_VERIFY = process.env.FAKE_TT_VERIFY === '1';
 const DELAY_NEXT = process.env.FAKE_DELAY_NEXT ? parseInt(process.env.FAKE_DELAY_NEXT, 10) : 0;
+const SIGNIN_BOTH_MARKERS = process.env.FAKE_SIGNIN_BOTH_MARKERS === '1';
+const DROP_FIRST_INPUT = process.env.FAKE_DROP_FIRST_INPUT === '1';
+// So lan input_text thanh cong tren man hinh email Google con bi
+// "rot" (chi dem khi FAKE_DROP_FIRST_INPUT=1).
+let dropFirstInputLeft = DROP_FIRST_INPUT ? 1 : 0;
+// Noi dung da nhap thanh cong vao tung o nhap (mo phong o giu text —
+// hotfix 3.2.3). Man hinh mat khau chi hien dau cham trong dump.
+let emailFieldText = '';
+let passwordFieldText = '';
+let ttUserFieldText = '';
+let ttPassFieldText = '';
 // So lan dump_ui da tra cho tung man hinh dang nhap Google (phuc vu
 // FAKE_DELAY_NEXT) — reset khi vao lai man hinh email / mat khau.
 let signinDumpCounts = { email: 0, password: 0 };
@@ -193,7 +226,7 @@ function ttLoginNodes() {
     return [
       { text: 'TikTok Lite', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
       { text: 'ユーザー名またはメールアドレス', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
-      { text: '', desc: 'ユーザー名', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: ttUserFieldText, desc: 'ユーザー名', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
       { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
     ];
   }
@@ -201,7 +234,7 @@ function ttLoginNodes() {
     return [
       { text: 'TikTok Lite', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
       { text: 'パスワードを入力してください', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
-      { text: '', desc: 'パスワード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: ttPassFieldText ? '•'.repeat(Math.min(ttPassFieldText.length, 12)) : '', desc: 'パスワード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
       { text: 'ログイン', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
     ];
   }
@@ -220,20 +253,27 @@ function ttLoginNodes() {
 // "signin" cua flow-config.json + mot o EditText + nut 次へ.
 function signinNodes() {
   if (signinState === 'email') {
-    return [
+    const emailNodes = [
       { text: 'Google', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
       { text: 'ログイン', desc: '', className: 'android.widget.TextView', bounds: [80, 300, 1000, 380], clickable: false },
       { text: 'メールアドレスまたは電話番号', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
-      { text: '', desc: 'メールアドレスまたは電話番号', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: emailFieldText, desc: 'メールアドレスまたは電話番号', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
       { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
     ];
+    if (SIGNIN_BOTH_MARKERS) {
+      // Node DOM AN cua buoc mat khau: van nam trong cay dump ngay ca
+      // khi dang o buoc email (hien tuong WebView tren may that —
+      // hotfix 3.2.3). Bounds rong (node khong hien tren man hinh).
+      emailNodes.push({ text: 'パスワード', desc: '', className: 'android.view.View', bounds: [0, 0, 0, 0], clickable: false });
+    }
+    return emailNodes;
   }
   if (signinState === 'password') {
     return [
       { text: 'Google', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
       { text: 'ようこそ', desc: '', className: 'android.widget.TextView', bounds: [80, 300, 1000, 380], clickable: false },
       { text: 'パスワード', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
-      { text: '', desc: 'パスワード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: passwordFieldText ? '•'.repeat(Math.min(passwordFieldText.length, 12)) : '', desc: 'パスワード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
       { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
     ];
   }
@@ -297,10 +337,10 @@ function findFakeNode(text, match) {
 function applyTapTransitions(hit) {
   const hitText = (hit.text || '') + (hit.desc || '');
   if (hitText.indexOf('次へ') >= 0) {
-    if (signinState === 'email') { signinState = 'password'; signinDumpCounts.password = 0; }
+    if (signinState === 'email') { signinState = 'password'; signinDumpCounts.password = 0; passwordFieldText = ''; }
     else if (signinState === 'password') signinState = FAKE_VERIFY ? 'verify' : 'done';
     // o 'verify' thi cham 次へ van o lai verify (chua nhap ma thi chua qua)
-    else if (ttLoginState === 'username') ttLoginState = 'password';
+    else if (ttLoginState === 'username') { ttLoginState = 'password'; ttPassFieldText = ''; }
   }
   // May trang thai dang nhap TikTok Lite (Giai doan 3.2)
   if (ttLoginState === 'none' && signinState === 'none' && hitText.indexOf('ログイン') >= 0) {
@@ -332,15 +372,17 @@ function handleCmd(msg) {
       break;
     case 'open_app':
       // Mo app khac = roi khoi man hinh dang nhap Google (neu dang o do)
-      // va ve feed TikTok (ttLoginState ve none)
+      // va ve feed TikTok (ttLoginState ve none); cac o nhap lam moi lai
       signinState = 'none';
       ttLoginState = 'none';
+      emailFieldText = ''; passwordFieldText = ''; ttUserFieldText = ''; ttPassFieldText = '';
       result(msg.id, true, null, { opened: args['package'] || '' });
       break;
     case 'open_google_signin':
       // Mo man hinh dang nhap Google — khong can Tro nang (giong agent that)
       signinState = 'email';
       signinDumpCounts = { email: 0, password: 0 };
+      emailFieldText = ''; passwordFieldText = '';
       result(msg.id, true, null, { opened: 'google_signin' });
       break;
     case 'wake':
@@ -392,10 +434,20 @@ function handleCmd(msg) {
       }
       // Ghi nhat ky theo man hinh dang nhap: email ghi ro (khong nhay cam),
       // mat khau CHI ghi dang che — khong bao gio ghi mat khau that.
-      if (signinState === 'email') logCmd('input_text(email):' + (args.text || ''));
-      else if (signinState === 'password') logCmd('input_text(password):********');
-      else if (ttLoginState === 'username') logCmd('input_text(ttuser):' + (args.text || ''));
-      else if (ttLoginState === 'password') logCmd('input_text(password):********');
+      // Dong thoi LUU noi dung vao o nhap tuong ung (mo phong o giu
+      // text sau khi nhap — hotfix 3.2.3): o mat khau chi giu noi bo,
+      // dump_ui chi hien dau cham.
+      if (signinState === 'email') {
+        logCmd('input_text(email):' + (args.text || ''));
+        // FAKE_DROP_FIRST_INPUT=1: lan nhap thanh cong dau tien bi
+        // "rot" — lenh van ok, cmdLog van ghi, nhung o KHONG giu
+        // noi dung (dump_ui tiep theo van thay o trong).
+        if (dropFirstInputLeft > 0) dropFirstInputLeft--;
+        else emailFieldText = args.text || '';
+      }
+      else if (signinState === 'password') { passwordFieldText = args.text || ''; logCmd('input_text(password):********'); }
+      else if (ttLoginState === 'username') { ttUserFieldText = args.text || ''; logCmd('input_text(ttuser):' + (args.text || '')); }
+      else if (ttLoginState === 'password') { ttPassFieldText = args.text || ''; logCmd('input_text(password):********'); }
       else logCmd('input_text:' + (args.text || ''));
       result(msg.id, true, null, { typedLength: (args.text || '').length });
       break;
