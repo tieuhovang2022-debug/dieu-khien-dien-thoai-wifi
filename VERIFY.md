@@ -382,3 +382,77 @@ theo giao diện TikTok Lite tiếng Nhật — phải hiệu chuẩn sau lần 
 thật đầu tiên bằng dump_ui (xem HUONG-DAN.md của gói 3.2). Xác minh
 của TikTok (mã xác nhận / CAPTCHA) vẫn là bước chạm tay (flow dừng ở
 waiting_manual chờ Resume) — đúng giới hạn đã thống nhất.
+
+## Giai đoạn 3.2.1 — Hotfix lỗi máy thật: nút "Tiếp theo" xuất hiện trễ trong cây accessibility (2026-11-16)
+
+### Bằng chứng từ máy thật (Sony SOV37)
+
+Ảnh chụp máy thật khi chạy flow "Cấp Gmail tự động": flow ĐÃ mở được
+màn hình đăng nhập Google tiếng Nhật và ĐÃ tự nhập email
+(KatinaJohnson9aamb@alazlyc.org hiện rõ trong ô
+メールアドレスまたは電話番号), nút 次へ màu xanh hiện rõ trên màn
+hình — nhưng run vẫn báo lỗi "Không thấy nút Tiếp theo ở màn hình
+nhập email".
+
+Chẩn đoán: `gmailSigninSequence()` chỉ thử `tap_text` MỘT lần duy
+nhất cho nút Tiếp theo. Trên máy thật, tại đúng thời điểm đó cây
+accessibility chưa kịp lộ node nút (bàn phím đang mở / màn hình đang
+chuyển / ô nhập đang xác thực) nên lần thử duy nhất trượt. Marker
+không sai — KHÔNG đổi marker.
+
+### Cách sửa (chỉ server.js; agent Android không đổi)
+
+- Thêm helper `tapMarkerWithRetry(deviceId, markers, { timeoutMs:
+  15000, intervalMs: 1200, verifyMarkers, logTag })`: quét dump_ui
+  liên tục — thấy chữ xác minh (verifyMarkers của mục flow-config
+  tương ứng) thì dừng ngay và báo 'verify'; thấy node chứa marker
+  (text hoặc desc, có bounds) thì chạm vào tâm bounds bằng lệnh
+  'tap' và báo 'tapped'; hết 15 giây chưa thấy thì báo 'not_found'.
+- `gmailSigninSequence()`: dùng helper cho CẢ HAI lần bấm Tiếp theo
+  (màn hình email + màn hình mật khẩu), thay cho `tapFirstMarker`
+  một lần. Gặp 'verify' giữa lúc chờ nút thì xử lý đúng như nhánh
+  xác minh sẵn có (dừng Chờ chạm tay / outcome 'verify'; Resume thì
+  bước chờ màn hình mật khẩu xử lý như đã resume). Mọi sự kiện, ghi
+  chú, cách che mật khẩu giữ nguyên.
+- `tiktokLoginSequence()` (flow dang-nhap-tiktok-lite): dùng helper
+  tương tự cho nút vào đăng nhập (loginEntry), nút sau khi nhập
+  username và nút đăng nhập sau mật khẩu (loginButton) — cùng cơ chế
+  báo 'verify' và dừng Chờ chạm tay như cũ.
+- flow-config.json KHÔNG đổi marker. Mọi API và hành vi khác giữ
+  nguyên.
+
+### Fake agent — mô phỏng lỗi máy thật
+
+- Env mới `FAKE_DELAY_NEXT=<n>`: trên màn hình email VÀ mật khẩu của
+  đăng nhập Google, node nút 次へ bị ẩn khỏi n lần dump_ui đầu tiên
+  của màn hình đó, xuất hiện từ lần dump thứ n+1.
+- Lệnh 'tap' theo tọa độ nay mô phỏng chạm vào node nằm dưới điểm
+  chạm (chuyển màn hình giống tap_text); chạm vào nút (Button) có
+  chữ thì cmdLog ghi thêm "tap_text:<chữ>" để script kiểm chứng thấy
+  được hiệu ứng chạm nút của helper (helper chạm bằng 'tap').
+
+### Kết quả kiểm chứng (fake agent, vòng kín)
+
+**verify-stage321.js (mới): 18 PASS, 0 FAIL**, gồm:
+
+- (a) Với FAKE_DELAY_NEXT=2, kiểm tra trực tiếp qua /api/cmd
+  dump_ui: 2 lần dump đầu ở màn hình email CHƯA có node 次へ
+  (4 nodes), lần dump thứ 3 nút xuất hiện (5 nodes).
+- (b) Với FAKE_DELAY_NEXT=2, flow cap-gmail-tu-dong vẫn chạy đến
+  done; thứ tự lệnh agent nhận được vẫn đúng:
+  `open_google_signin → input_text(email) → tap_text:次へ →
+  input_text(password):******** → tap_text:次へ`.
+- (c) Không đặt FAKE_DELAY_NEXT: flow vẫn done, thứ tự lệnh đúng
+  như trước — không hồi quy đường bình thường.
+- (d) Mật khẩu thử nghiệm không xuất hiện trong bất kỳ response
+  API / sự kiện nào của cả phiên.
+
+**Chạy lại hồi quy: verify-stage2.js 38 PASS, 0 FAIL;
+verify-stage3.js 41 PASS, 0 FAIL; verify-stage31.js 29 PASS,
+0 FAIL; verify-stage32.js 54 PASS, 0 FAIL** — đúng nguyên số đếm
+trước hotfix, không hồi quy.
+
+LƯU Ý: kiểm chứng trên vẫn là với fake agent — nhưng lần này fake
+agent mô phỏng đúng hiện tượng đã quan sát trên máy thật (nút hiện
+trễ trong cây accessibility). Cần chạy lại flow Cấp Gmail trên máy
+SOV37 thật để xác nhận dứt điểm.

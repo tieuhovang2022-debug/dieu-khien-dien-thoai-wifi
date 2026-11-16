@@ -771,6 +771,69 @@ async function tapFirstMarker(deviceId, markers) {
 }
 
 /**
+ * Hotfix 3.2.1 — cham marker kieu CHO + THU LAI (polling tap).
+ * Quet dump_ui lien tuc (moi intervalMs, toi da timeoutMs):
+ *  - thay chu XAC MINH (opts.verifyMarkers) thi dung ngay, tra
+ *    { status: 'verify', marker };
+ *  - thay node chua mot marker (trong text hoac desc, co bounds hop le)
+ *    thi cham vao tam bounds bang lenh 'tap', tra
+ *    { status: 'tapped', marker };
+ *  - het gio van chua thay thi tra { status: 'not_found' }.
+ * Ly do: tren may that (Sony SOV37, chay that 2026-11-16) nut 次へ hien
+ * ro tren man hinh dang nhap Google va email da duoc tu nhap, nhung mot
+ * lan tap_text DUY NHAT van truot — cay accessibility o thoi diem do
+ * chua kip lo node nut (ban phim dang mo / man hinh dang chuyen / o
+ * nhap dang xac thuc). Cho va quet lai vai lan la het truot.
+ */
+async function tapMarkerWithRetry(deviceId, markers, opts) {
+  opts = opts || {};
+  const timeoutMs = opts.timeoutMs || 15000;
+  const intervalMs = opts.intervalMs || 1200;
+  const verifyMarkers = opts.verifyMarkers || null;
+  const tag = opts.logTag || 'tap-marker';
+  const t0 = Date.now();
+  let scans = 0;
+  while (true) {
+    scans++;
+    const nodes = await dumpUiNodes(deviceId);
+    if (nodes) {
+      if (verifyMarkers) {
+        const v = dumpHasAny(nodes, verifyMarkers);
+        if (v) {
+          console.log('[tap-retry] ' + tag + ': thay chu xac minh "' + v + '" sau ' + scans + ' lan quet');
+          return { status: 'verify', marker: v };
+        }
+      }
+      let hitNode = null;
+      let hitMarker = null;
+      for (const m of markers) {
+        if (!m) continue;
+        for (const n of nodes) {
+          const hay = ((n.text || '') + '\n' + (n.desc || ''));
+          if (hay.indexOf(m) >= 0 && Array.isArray(n.bounds) && n.bounds.length === 4) {
+            hitNode = n; hitMarker = m; break;
+          }
+        }
+        if (hitNode) break;
+      }
+      if (hitNode) {
+        const x = Math.round((hitNode.bounds[0] + hitNode.bounds[2]) / 2);
+        const y = Math.round((hitNode.bounds[1] + hitNode.bounds[3]) / 2);
+        try {
+          const res = await sendCommand(deviceId, 'tap', { x: x, y: y }, 15000);
+          if (res && res.ok) {
+            if (scans > 1) console.log('[tap-retry] ' + tag + ': cham duoc "' + hitMarker + '" sau ' + scans + ' lan quet');
+            return { status: 'tapped', marker: hitMarker };
+          }
+        } catch (e) { /* cham loi — vong quet sau thu lai */ }
+      }
+    }
+    if (Date.now() - t0 >= timeoutMs) return { status: 'not_found' };
+    await sleepMs(intervalMs);
+  }
+}
+
+/**
  * Cua so ~8 giay sau khi bam Tiep theo o man hinh mat khau: neu thay nut
  * Dong y (dieu khoan) thi cham (dung sai — khong thay cung khong sao).
  * Thoat som neu qua >= 3 giay ma man hinh khong con bat ky dau chu dang
@@ -854,17 +917,30 @@ async function gmailSigninSequence(deviceId, acct, hooks) {
   out.emailTyped = true;
   log('Đã nhập email ' + acct.email);
 
-  // Buoc 5: bam Tiep theo
-  const nb1 = await tapFirstMarker(deviceId, cfg.nextButton);
-  if (!nb1) {
+  // Buoc 5: bam Tiep theo — dung helper CHO + THU LAI (hotfix 3.2.1):
+  // tren may that mot lan tap_text co the truot du nut da hien tren man
+  // hinh, vi cay accessibility chua kip lo node nut o thoi diem do.
+  let resumedVerify5 = false;
+  const nb1 = await tapMarkerWithRetry(deviceId, cfg.nextButton, {
+    verifyMarkers: cfg.verifyMarkers, logTag: 'gmail-next-email'
+  });
+  if (nb1.status === 'not_found') {
     out.note = 'Không thấy nút Tiếp theo ở màn hình nhập email';
     return out;
   }
-  log('Đã bấm "' + nb1 + '", chờ màn hình nhập mật khẩu...');
+  if (nb1.status === 'verify') {
+    log('Google yêu cầu xác minh — dừng chờ chạm tay');
+    if (!hooks.park) { out.outcome = 'verify'; out.note = SIGNIN_VERIFY_NOTE; return out; }
+    const how5 = await hooks.park(SIGNIN_VERIFY_NOTE);
+    if (how5 === 'stopped') { out.outcome = 'stopped'; return out; }
+    resumedVerify5 = true; // da xu ly tay — buoc 6 xu ly nhu da resume
+  } else {
+    log('Đã bấm "' + nb1.marker + '", chờ màn hình nhập mật khẩu...');
+  }
 
   // Buoc 6: cho man hinh mat khau — hoac man hinh XAC MINH (dung Cho cham tay)
   let pwDump = null;
-  let resumed6 = false;
+  let resumed6 = resumedVerify5;
   while (!pwDump) {
     const r = await pollDumpUntil(deviceId, (nodes) => {
       if (dumpHasAny(nodes, cfg.verifyMarkers)) return 'verify';
@@ -906,13 +982,23 @@ async function gmailSigninSequence(deviceId, acct, hooks) {
     out.passwordTyped = true;
     log('Đã nhập mật khẩu ********');
 
-    // Buoc 8: bam Tiep theo
-    const nb2 = await tapFirstMarker(deviceId, cfg.nextButton);
-    if (!nb2) {
+    // Buoc 8: bam Tiep theo (helper CHO + THU LAI nhu buoc 5 — 3.2.1)
+    const nb2 = await tapMarkerWithRetry(deviceId, cfg.nextButton, {
+      verifyMarkers: cfg.verifyMarkers, logTag: 'gmail-next-password'
+    });
+    if (nb2.status === 'not_found') {
       out.note = 'Không thấy nút Tiếp theo ở màn hình nhập mật khẩu';
       return out;
     }
-    log('Đã bấm "' + nb2 + '", chờ Google xử lý...');
+    if (nb2.status === 'verify') {
+      log('Google yêu cầu xác minh — dừng chờ chạm tay');
+      if (!hooks.park) { out.outcome = 'verify'; out.note = SIGNIN_VERIFY_NOTE; return out; }
+      const how8 = await hooks.park(SIGNIN_VERIFY_NOTE);
+      if (how8 === 'stopped') { out.outcome = 'stopped'; return out; }
+      // Da xu ly tay xong -> roi khoi khoi nay, sang vong kiem tra cuoi
+    } else {
+      log('Đã bấm "' + nb2.marker + '", chờ Google xử lý...');
+    }
   }
 
   // Buoc 9+10: vong kiem tra cuoi — cham nut Dong y neu co, quet chu xac
@@ -991,12 +1077,23 @@ async function tiktokLoginSequence(deviceId, acct, hooks) {
         out.note = 'Đã bấm nút đăng nhập nhiều lần nhưng chưa thấy màn hình nhập tài khoản';
         return out;
       }
-      const t = await tapFirstMarker(deviceId, cfg.loginEntry);
-      if (!t) {
+      // Helper CHO + THU LAI (hotfix 3.2.1) thay cho mot lan tap_text:
+      // nut dang nhap co the chua kip lo trong cay accessibility.
+      const t = await tapMarkerWithRetry(deviceId, cfg.loginEntry, {
+        verifyMarkers: cfg.verifyMarkers, logTag: 'tiktok-login-entry'
+      });
+      if (t.status === 'not_found') {
         out.note = 'Không bấm được nút đăng nhập của TikTok Lite';
         return out;
       }
-      log('Đã bấm "' + t + '", chờ màn hình nhập tài khoản...');
+      if (t.status === 'verify') {
+        log('TikTok yêu cầu xác minh — dừng chờ chạm tay');
+        if (!hooks.park) { out.outcome = 'verify'; out.note = TT_VERIFY_NOTE; return out; }
+        const howE = await hooks.park(TT_VERIFY_NOTE);
+        if (howE === 'stopped') { out.outcome = 'stopped'; return out; }
+        continue;
+      }
+      log('Đã bấm "' + t.marker + '", chờ màn hình nhập tài khoản...');
       await sleepMs(1500);
       continue;
     }
@@ -1026,17 +1123,28 @@ async function tiktokLoginSequence(deviceId, acct, hooks) {
   out.usernameTyped = true;
   log('Đã nhập tài khoản ' + acct.username);
 
-  // Buoc 4: bam nut dang nhap / tiep theo
-  const lb1 = await tapFirstMarker(deviceId, cfg.loginButton);
-  if (!lb1) {
+  // Buoc 4: bam nut dang nhap / tiep theo (helper CHO + THU LAI — 3.2.1)
+  let resumedVerify4 = false;
+  const lb1 = await tapMarkerWithRetry(deviceId, cfg.loginButton, {
+    verifyMarkers: cfg.verifyMarkers, logTag: 'tiktok-login-user-next'
+  });
+  if (lb1.status === 'not_found') {
     out.note = 'Không thấy nút đăng nhập/Tiếp theo ở màn hình nhập tài khoản';
     return out;
   }
-  log('Đã bấm "' + lb1 + '", chờ màn hình nhập mật khẩu...');
+  if (lb1.status === 'verify') {
+    log('TikTok yêu cầu xác minh — dừng chờ chạm tay');
+    if (!hooks.park) { out.outcome = 'verify'; out.note = TT_VERIFY_NOTE; return out; }
+    const how4 = await hooks.park(TT_VERIFY_NOTE);
+    if (how4 === 'stopped') { out.outcome = 'stopped'; return out; }
+    resumedVerify4 = true; // da xu ly tay — buoc 5 xu ly nhu da resume
+  } else {
+    log('Đã bấm "' + lb1.marker + '", chờ màn hình nhập mật khẩu...');
+  }
 
   // Buoc 5: cho man hinh mat khau — hoac man hinh XAC MINH (Cho cham tay)
   let pwDump = null;
-  let resumed5 = false;
+  let resumed5 = resumedVerify4;
   while (!pwDump) {
     const r = await pollDumpUntil(deviceId, (nodes) => {
       if (dumpHasAny(nodes, cfg.verifyMarkers)) return 'verify';
@@ -1077,13 +1185,23 @@ async function tiktokLoginSequence(deviceId, acct, hooks) {
     out.passwordTyped = true;
     log('Đã nhập mật khẩu ********');
 
-    // Buoc 7: bam nut dang nhap
-    const lb2 = await tapFirstMarker(deviceId, cfg.loginButton);
-    if (!lb2) {
+    // Buoc 7: bam nut dang nhap (helper CHO + THU LAI nhu buoc 4 — 3.2.1)
+    const lb2 = await tapMarkerWithRetry(deviceId, cfg.loginButton, {
+      verifyMarkers: cfg.verifyMarkers, logTag: 'tiktok-login-pass-next'
+    });
+    if (lb2.status === 'not_found') {
       out.note = 'Không thấy nút đăng nhập ở màn hình nhập mật khẩu';
       return out;
     }
-    log('Đã bấm "' + lb2 + '", chờ TikTok xử lý...');
+    if (lb2.status === 'verify') {
+      log('TikTok yêu cầu xác minh — dừng chờ chạm tay');
+      if (!hooks.park) { out.outcome = 'verify'; out.note = TT_VERIFY_NOTE; return out; }
+      const how7 = await hooks.park(TT_VERIFY_NOTE);
+      if (how7 === 'stopped') { out.outcome = 'stopped'; return out; }
+      // Da xu ly tay xong -> sang buoc kiem tra cuoi
+    } else {
+      log('Đã bấm "' + lb2.marker + '", chờ TikTok xử lý...');
+    }
   }
 
   // Buoc 8: kiem tra cuoi — con chu xac minh thi Cho cham tay (Resume

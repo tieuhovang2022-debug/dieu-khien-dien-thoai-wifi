@@ -1,5 +1,24 @@
 # Farm Control — Giai đoạn 3.2: Hướng dẫn
 
+> **BẢN 3.2.1 (hotfix, 2026-11-16)** — Sửa lỗi gặp trên máy thật
+> (Sony SOV37): khi chạy "Cấp Gmail tự động", máy đã mở được màn hình
+> đăng nhập Google và đã tự nhập email, nút "Tiếp theo" hiện rõ trên
+> màn hình, nhưng flow vẫn báo "Không thấy nút Tiếp theo". Nguyên
+> nhân: bản 3.2 chỉ thử bấm nút đúng MỘT lần, mà trên máy thật cây
+> accessibility có lúc chưa kịp hiện node nút ở thời điểm đó. Bản
+> 3.2.1 cho server **chờ và thử bấm lại liên tục tới 15 giây** (áp
+> dụng cho cả 2 nút "Tiếp theo" của đăng nhập Google và các nút của
+> đăng nhập TikTok Lite). Marker nhận diện KHÔNG đổi; app Farm Agent
+> KHÔNG đổi (vẫn v3.1, không cần cài lại).
+>
+> **Cách cập nhật từ 3.2 lên 3.2.1:** (1) Dừng server cũ (Ctrl+C
+> trong cửa sổ Terminal đang chạy server). (2) Giải nén gói 3.2.1.
+> (3) Chép **toàn bộ file trong thư mục `data/` của server cũ** (bản
+> 3.2 đang dùng) đè sang thư mục `data/` của server 3.2.1 — để giữ
+> kho Gmail, kho heo, link game và tiến độ điểm danh. (4) Vào thư
+> mục `server` của bản 3.2.1 và chạy `node server.js`. Xong — mở lại
+> trang điều khiển và chạy lại "Cấp Gmail" để kiểm tra.
+
 Giai đoạn 3.2 viết lại **trang điều khiển** theo mẫu đã duyệt (4 tab,
 tông tím) và code đầy đủ các phần còn thiếu: **kho tài khoản xem heo**,
 **đăng nhập TikTok Lite tự động bằng tài khoản trong kho**, **điểm

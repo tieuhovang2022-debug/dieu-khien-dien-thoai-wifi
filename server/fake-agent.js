@@ -29,6 +29,18 @@
 //                           "verify" (本人確認 / 確認コード) thay vi ve feed
 //                           — mo phong TikTok bat xac minh, flow dang nhap
 //                           phai dung Cho cham tay.
+//   FAKE_DELAY_NEXT=n    -> (Hotfix 3.2.1) tren man hinh email VA mat
+//                           khau cua dang nhap Google, node nut 次へ bi
+//                           AN khoi n lan dump_ui dau tien cua man hinh
+//                           do va chi xuat hien tu lan dump thu n+1 —
+//                           mo phong dung loi may that (nut hien tren
+//                           man hinh nhung cay accessibility chua kip
+//                           lo node nut). Flow phai quet lai moi thay.
+// Lenh 'tap' theo toa do: neu diem cham nam trong bounds cua mot node
+// thi mo phong nhu cham vao node do (chuyen man hinh giong tap_text);
+// rieng cham vao nut (Button) co chu thi cmdLog ghi them dong
+// "tap_text:<chu>" de script kiem chung thay duoc hieu ung cham nut
+// (helper 3.2.1 cham bang 'tap' thay vi 'tap_text').
 // Giai doan 3.2: feed TikTok Lite co them nut ログイン (vao may trang
 // thai dang nhap TikTok: username -> password -> feed/verify) va nut
 // チェックインする (bam vao la man hinh bao チェックイン完了 — phuc vu
@@ -50,6 +62,10 @@ const NO_FOCUS = process.env.FAKE_NO_FOCUS === '1';
 const CHECKIN_AFTER = process.env.FAKE_CHECKIN_AFTER ? parseInt(process.env.FAKE_CHECKIN_AFTER, 10) : 0;
 const FAKE_VERIFY = process.env.FAKE_VERIFY === '1';
 const FAKE_TT_VERIFY = process.env.FAKE_TT_VERIFY === '1';
+const DELAY_NEXT = process.env.FAKE_DELAY_NEXT ? parseInt(process.env.FAKE_DELAY_NEXT, 10) : 0;
+// So lan dump_ui da tra cho tung man hinh dang nhap Google (phuc vu
+// FAKE_DELAY_NEXT) — reset khi vao lai man hinh email / mat khau.
+let signinDumpCounts = { email: 0, password: 0 };
 let dumpCount = 0; // chi dem dump_ui o man hinh TikTok (phuc vu FAKE_CHECKIN_AFTER)
 // May trang thai man hinh dang nhap Google (Giai doan 3.1):
 //   none -> (open_google_signin) -> email -> (nhap email + cham 次へ) ->
@@ -226,9 +242,24 @@ function signinNodes() {
   ];
 }
 
+/**
+ * Node dang nhap Google NHIN THAY DUOC tai thoi diem nay: voi
+ * FAKE_DELAY_NEXT=n, node nut 次へ bi an khi so lan dump_ui cua man
+ * hinh email/mat khau hien tai con <= n (mo phong cay accessibility
+ * chua kip lo node nut nhu tren may that).
+ */
+function visibleSigninNodes() {
+  let nodes = signinNodes();
+  if (DELAY_NEXT > 0 && (signinState === 'email' || signinState === 'password') &&
+      signinDumpCounts[signinState] <= DELAY_NEXT) {
+    nodes = nodes.filter((n) => (n.text || '') !== '次へ');
+  }
+  return nodes;
+}
+
 /** Node cua man hinh hien tai: dang o man hinh dang nhap thi tra node dang nhap. */
 function currentNodes() {
-  if (signinState !== 'none') return signinNodes();
+  if (signinState !== 'none') return visibleSigninNodes();
   if (ttLoginState !== 'none') return ttLoginNodes();
   return fakeNodes();
 }
@@ -243,6 +274,31 @@ function findFakeNode(text, match) {
     }
   }
   return null;
+}
+
+/**
+ * Hieu ung chuyen man hinh khi cham vao mot node (dung chung cho
+ * tap_text va tap theo toa do): cham 次へ thi dang nhap Google/TikTok
+ * chuyen buoc; cham ログイン o feed thi vao man hinh username TikTok;
+ * cham ログイン o man hinh mat khau TikTok thi ket thuc dang nhap;
+ * cham チェックインする thi danh dau da check-in.
+ */
+function applyTapTransitions(hit) {
+  const hitText = (hit.text || '') + (hit.desc || '');
+  if (hitText.indexOf('次へ') >= 0) {
+    if (signinState === 'email') { signinState = 'password'; signinDumpCounts.password = 0; }
+    else if (signinState === 'password') signinState = FAKE_VERIFY ? 'verify' : 'done';
+    // o 'verify' thi cham 次へ van o lai verify (chua nhap ma thi chua qua)
+    else if (ttLoginState === 'username') ttLoginState = 'password';
+  }
+  // May trang thai dang nhap TikTok Lite (Giai doan 3.2)
+  if (ttLoginState === 'none' && signinState === 'none' && hitText.indexOf('ログイン') >= 0) {
+    ttLoginState = 'username';
+  } else if (ttLoginState === 'password' && hitText.indexOf('ログイン') >= 0) {
+    ttLoginState = FAKE_TT_VERIFY ? 'verify' : 'none';
+  }
+  // Nut diem danh tren feed: bam vao la man hinh bao check-in xong
+  if (hitText.indexOf('チェックインする') >= 0) ttCheckedIn = true;
 }
 
 function handleCmd(msg) {
@@ -273,6 +329,7 @@ function handleCmd(msg) {
     case 'open_google_signin':
       // Mo man hinh dang nhap Google — khong can Tro nang (giong agent that)
       signinState = 'email';
+      signinDumpCounts = { email: 0, password: 0 };
       result(msg.id, true, null, { opened: 'google_signin' });
       break;
     case 'wake':
@@ -288,10 +345,24 @@ function handleCmd(msg) {
       if (IS_DEVICE_OWNER) result(msg.id, true, null, { wiping: true });
       else result(msg.id, false, 'not_device_owner', null);
       break;
-    case 'tap':
+    case 'tap': {
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
-      result(msg.id, true, null, { tapped: { x: args.x || 0, y: args.y || 0 } });
+      // Cham theo toa do: diem cham nam trong bounds cua node nao thi
+      // mo phong nhu cham vao node do (chuyen man hinh nhu tap_text);
+      // cham vao nut (Button) co chu thi ghi them "tap_text:<chu>" vao
+      // cmdLog — helper 3.2.1 cua server cham nut bang lenh 'tap' nay.
+      const px = args.x || 0, py = args.y || 0;
+      const hitN = currentNodes().find((n) => Array.isArray(n.bounds) &&
+        px >= n.bounds[0] && px <= n.bounds[2] && py >= n.bounds[1] && py <= n.bounds[3]);
+      if (hitN) {
+        applyTapTransitions(hitN);
+        if (hitN.className && hitN.className.indexOf('Button') >= 0 && hitN.text) {
+          logCmd('tap_text:' + hitN.text);
+        }
+      }
+      result(msg.id, true, null, { tapped: { x: px, y: py } });
       break;
+    }
     case 'swipe':
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
       result(msg.id, true, null, { swiped: { x1: args.x1 || 0, y1: args.y1 || 0, x2: args.x2 || 0, y2: args.y2 || 0 } });
@@ -316,8 +387,10 @@ function handleCmd(msg) {
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
       // Dang o man hinh dang nhap Google: tra node dang nhap, KHONG dem
       // vao bo dem check-in (chi dump o man hinh TikTok moi dem).
+      // Rieng bo dem cua FAKE_DELAY_NEXT thi co dem theo man hinh.
       if (signinState !== 'none') {
-        const sn = signinNodes();
+        if (signinState === 'email' || signinState === 'password') signinDumpCounts[signinState]++;
+        const sn = visibleSigninNodes();
         result(msg.id, true, null, { nodes: sn, count: sn.length });
         break;
       }
@@ -338,22 +411,8 @@ function handleCmd(msg) {
       const hit = findFakeNode(args.text || '', args.match || 'contains');
       if (!hit) { result(msg.id, false, 'text_not_found', null); break; }
       logCmd('tap_text:' + (args.text || ''));
-      // May trang thai dang nhap: cham nut 次へ thi chuyen man hinh
-      const hitText = (hit.text || '') + (hit.desc || '');
-      if (hitText.indexOf('次へ') >= 0) {
-        if (signinState === 'email') signinState = 'password';
-        else if (signinState === 'password') signinState = FAKE_VERIFY ? 'verify' : 'done';
-        // o 'verify' thi cham 次へ van o lai verify (chua nhap ma thi chua qua)
-        else if (ttLoginState === 'username') ttLoginState = 'password';
-      }
-      // May trang thai dang nhap TikTok Lite (Giai doan 3.2)
-      if (ttLoginState === 'none' && signinState === 'none' && hitText.indexOf('ログイン') >= 0) {
-        ttLoginState = 'username';
-      } else if (ttLoginState === 'password' && hitText.indexOf('ログイン') >= 0) {
-        ttLoginState = FAKE_TT_VERIFY ? 'verify' : 'none';
-      }
-      // Nut diem danh tren feed: bam vao la man hinh bao check-in xong
-      if (hitText.indexOf('チェックインする') >= 0) ttCheckedIn = true;
+      // May trang thai dang nhap: cham vao node thi chuyen man hinh
+      applyTapTransitions(hit);
       result(msg.id, true, null, {
         tapped: true,
         text: hit.text || hit.desc || '',
