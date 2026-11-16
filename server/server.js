@@ -1,4 +1,4 @@
-// Farm Control - Server Giai đoạn 3.2
+// Farm Control - Server Giai đoạn 3.3
 // TCP 8787: agent ket noi (JSON theo dong). HTTP 8080: dashboard + API.
 // Chi dung module co san cua Node (net/http/fs/path/os/crypto). Khong can npm install.
 //
@@ -49,6 +49,22 @@
 //   data/checkin-state.json. API GET /api/checkin + POST /api/checkin/reset.
 // - Dashboard viet lai: 4 tab (Dan may / Kho du lieu / Tac vu / Hanh dong),
 //   tong tim. Agent KHONG doi (van v3.1).
+//
+// Giai doan 3.3 them (chi server + dashboard, agent van v3.1):
+// - XOA MAY: POST /api/devices/delete {deviceId} — xoa ho so may khoi danh
+//   sach; tai khoan Gmail + TK heo da cap cho may do duoc TRA VE KHO
+//   (status 'ready', xoa deviceId/assignedAt), xoa trang thai diem danh
+//   va vong xem cua may; ghi su kien 'device_delete'. May ket noi lai
+//   sau nay se hien lai nhu mot may moi.
+// - RESET MAY: POST /api/devices/reset {deviceId} — gui lenh agent
+//   'factory_reset' (co tu Giai doan 2); thanh cong ghi su kien 'reset';
+//   may chua Device Owner thi tra loi 'not_device_owner' kem thong diep
+//   ro rang. Reset KHONG dong vao ho so may / tai khoan da cap (giu lien
+//   tuc theo doi); sau reset, quet QR ghi danh (muc Them may) la agent
+//   tu cai lai + nhan quyen chu may.
+// - Muc THEM MAY o tab Dan may: gom panel QR ghi danh + link tai
+//   /apks/agent.apk + 2 danh sach buoc (may moi/vua reset — quet QR;
+//   may dang dung san — cai APK truc tiep).
 'use strict';
 const net = require('net');
 const http = require('http');
@@ -2378,6 +2394,69 @@ function stopWatch(deviceId) {
   return { watch: w };
 }
 
+// ================= Xoa may / Reset may (Giai doan 3.3) =================
+/** Tra tai khoan Gmail + TK heo da cap cho may ve kho (status 'ready'). */
+function releaseDeviceAccounts(deviceId) {
+  const released = { gmail: null, heo: null };
+  const ga = pool.accounts.find((a) => a.status === 'assigned' && a.deviceId === deviceId);
+  if (ga) {
+    released.gmail = ga.email;
+    ga.status = 'ready';
+    ga.deviceId = null;
+    ga.assignedAt = null;
+    savePool();
+  }
+  const ha = heoPool.accounts.find((a) => a.status === 'assigned' && a.deviceId === deviceId);
+  if (ha) {
+    released.heo = ha.username;
+    ha.status = 'ready';
+    ha.deviceId = null;
+    ha.assignedAt = null;
+    ha.loggedInAt = null;
+    saveHeoPool();
+  }
+  return released;
+}
+
+/**
+ * Xoa ho so may khoi danh sach server: tra tai khoan da cap ve kho, xoa
+ * trang thai diem danh + vong xem, dong ket noi agent, ghi su kien
+ * 'device_delete'. May ket noi lai sau nay hien lai nhu may moi.
+ * Tra {ok, released} hoac {error:'device_not_found'}.
+ */
+function deleteDevice(deviceId) {
+  const dev = devices.get(deviceId);
+  if (!dev) return { error: 'device_not_found' };
+  const released = releaseDeviceAccounts(deviceId);
+  if (checkinState[deviceId]) {
+    delete checkinState[deviceId];
+    saveCheckinState();
+  }
+  const w = watches.get(deviceId);
+  if (w) {
+    w.stopRequested = true;
+    watches.delete(deviceId);
+  }
+  // Ghi su kien TRUOC khi xoa khoi Map de nhan may (label) van con.
+  const parts = [];
+  if (released.gmail) parts.push('Gmail ' + released.gmail + ' đã trả về kho');
+  if (released.heo) parts.push('TK heo ' + released.heo + ' đã trả về kho');
+  addEvent('device_delete', deviceId,
+    'Đã xoá máy khỏi danh sách' + (parts.length ? ' — ' + parts.join('; ') : ''));
+  for (const [cid, p] of dev.pending) {
+    clearTimeout(p.timer);
+    p.reject(new Error('device_deleted'));
+    dev.pending.delete(cid);
+  }
+  if (dev.socket) {
+    try { dev.socket.destroy(); } catch (e) {}
+    dev.socket = null;
+  }
+  devices.delete(deviceId);
+  console.log('[device] da xoa may ' + deviceId);
+  return { ok: true, released: released };
+}
+
 // ================= QR ghi danh Device Owner =================
 let provisionCfg = { checksum: '', component: 'vn.duongashita.farmagent/vn.duongashita.farmagent.AdminReceiver' };
 try {
@@ -2460,6 +2539,46 @@ const httpServer = http.createServer(async (req, res) => {
       } catch (e) {
         const code = (e.message === 'device_not_found') ? 404 : 503;
         jsonRes(res, code, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // ---- Xoa may / Reset may (Giai doan 3.3) ----
+    if (req.method === 'POST' && u.pathname === '/api/devices/delete') {
+      let j;
+      try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
+      if (!j.deviceId) { jsonRes(res, 400, { ok: false, error: 'missing_deviceId' }); return; }
+      const r = deleteDevice(j.deviceId);
+      if (r.error) { jsonRes(res, 404, { ok: false, error: r.error }); return; }
+      jsonRes(res, 200, { ok: true, released: r.released });
+      return;
+    }
+    if (req.method === 'POST' && u.pathname === '/api/devices/reset') {
+      let j;
+      try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
+      if (!j.deviceId) { jsonRes(res, 400, { ok: false, error: 'missing_deviceId' }); return; }
+      if (!devices.get(j.deviceId)) { jsonRes(res, 404, { ok: false, error: 'device_not_found' }); return; }
+      let result;
+      try {
+        result = await sendCommand(j.deviceId, 'factory_reset', {});
+      } catch (e) {
+        // device_offline / cmd_timeout / send_failed...
+        jsonRes(res, 200, { ok: false, error: e.message });
+        return;
+      }
+      if (result && result.ok) {
+        addEvent('reset', j.deviceId,
+          'Đã gửi lệnh reset nhà máy — máy sẽ xoá sạch và khởi động lại; quét QR ở màn hình cài đặt để cài lại agent');
+        jsonRes(res, 200, { ok: true, wiping: !!(result.data && result.data.wiping) });
+      } else {
+        const err = (result && result.error) || 'unknown';
+        jsonRes(res, 200, {
+          ok: false,
+          error: err,
+          message: err === 'not_device_owner'
+            ? 'Máy chưa phải Device Owner — cần cấp quyền chủ máy bằng QR trước khi reset từ xa'
+            : err
+        });
       }
       return;
     }

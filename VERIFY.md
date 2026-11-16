@@ -719,3 +719,79 @@ phím mở làm lệch bounds nút). Cần chạy lại flow Cấp Gmail trên
 máy SOV37 thật (bản 3.2.4) để xác nhận dứt điểm.
 - Chạy thêm verify-stage324.js trên bản server ĐÃ ĐÓNG GÓI trong
   thư mục giao hàng (farm-agent-giai-doan-3-2-4): 18 PASS, 0 FAIL.
+
+## Giai đoạn 3.3 — Xoá máy + nút Reset máy + mục Thêm máy (kiểm chứng nội bộ, 2026-11-16)
+
+Yêu cầu của người dùng (2026-11-16 ~22:48, chốt bằng lựa chọn
+"Reset nhà máy — quét QR 1 lần, agent tự cài lại"): thêm vào tab
+Dàn máy (1) nút XOÁ MÁY, (2) mục THÊM MÁY, (3) nút RESET máy về
+trạng thái ban đầu; sau reset, quét QR ghi danh 1 lần ở màn hình
+cài đặt là agent tự cài lại. CHỈ sửa server + dashboard — agent
+vẫn v3.1 (lệnh factory_reset và QR provisioning đã có từ Giai
+đoạn 2, không đổi).
+
+Thay đổi:
+- POST /api/devices/delete {deviceId}: xoá hồ sơ máy khỏi Map;
+  tài khoản Gmail + TK heo đang 'assigned' cho máy được trả về
+  kho (status 'ready', deviceId/assignedAt = null; TK heo xoá
+  thêm loggedInAt); xoá entry checkin-state và watch state của
+  máy; reject các lệnh đang chờ + đóng socket; ghi sự kiện
+  'device_delete' (ghi TRƯỚC khi xoá Map để còn label). Id không
+  tồn tại → HTTP 404 {ok:false, error:'device_not_found'}. Máy
+  kết nối lại sau này hiện lại như máy mới.
+- POST /api/devices/reset {deviceId}: gửi lệnh agent
+  'factory_reset'; agent ok → ghi sự kiện 'reset' ("Đã gửi lệnh
+  reset nhà máy — máy sẽ xoá sạch và khởi động lại; quét QR ở
+  màn hình cài đặt để cài lại agent"); agent trả not_device_owner
+  → {ok:false, error:'not_device_owner', message:'Máy chưa phải
+  Device Owner — cần cấp quyền chủ máy bằng QR trước khi reset
+  từ xa'}; lỗi offline/timeout trả thẳng error. Reset KHÔNG
+  chạm vào hồ sơ máy và tài khoản đã cấp (liên tục theo dõi).
+- Dashboard: mỗi thẻ máy thêm nút '↺ Reset máy' (class danger,
+  tắt khi máy offline) với xác nhận 2 bước ngay trên nút — bấm
+  lần 1 nút đổi thành '⚠ Bấm lần nữa để XÁC NHẬN reset' trong
+  5 giây (trạng thái giữ trong biến resetArm nên sống qua các
+  lần tự làm mới 3 giây), bấm lần 2 mới gọi API; và nút
+  '🗑 Xoá máy' (luôn bấm được, kể cả máy offline — đúng ca dùng
+  chính: dọn hồ sơ máy cũ) với hộp confirm nêu rõ hồ sơ bị xoá,
+  tài khoản được trả về kho, tiến độ điểm danh bị xoá.
+- Mục '➕ Thêm máy' ở tab Dàn máy (panel QR cũ mở rộng, giữ
+  nguyên id qrLoad/qrCopy/qrPre và API /api/provision/qr): cách
+  A — máy mới / vừa reset nhà máy: mở máy → màn hình chào chạm
+  6 lần vào cùng một chỗ → quét QR ghi danh → máy tự cài Farm
+  Agent + nhận quyền chủ máy → mở app nhập IP server + nhãn
+  máy → bật Trợ năng; cách B — máy đang dùng sẵn: tải
+  /apks/agent.apk → cài → nhập IP/port/nhãn → Lưu & Kết nối →
+  bật Trợ năng + cấp quyền chụp màn hình.
+
+**verify-stage33.js (mới): 37 PASS, 0 FAIL.**
+- Fake agent (FAKE_DEVICE_OWNER=1) online → import + cấp 1
+  Gmail và 1 TK heo cho máy → chạy flow diem-danh ghi được
+  1 ngày (/api/checkin count=1).
+- Reset khi là Device Owner: ok:true + sự kiện 'reset'; hồ sơ
+  máy VẪN còn sau reset và Gmail vẫn 'assigned' nguyên cho máy
+  (liên tục theo dõi).
+- Fake khởi động lại với FAKE_DEVICE_OWNER=0: reset trả
+  ok:false + error 'not_device_owner' + message rõ ràng.
+- Xoá máy: ok:true + released đúng cả 2 tài khoản; máy biến
+  khỏi /api/devices; cả 2 tài khoản về 'ready' với
+  deviceId/assignedAt = null; entry điểm danh bị xoá; có sự
+  kiện 'device_delete'; xoá/reset id không tồn tại → 404.
+- Dashboard (GET /): có mục '➕ Thêm máy', link
+  /apks/agent.apk, bước 'chạm 6 lần', cách B 'Máy đang dùng
+  sẵn', nút 'Xoá máy' + 'Reset máy' và chữ 'Bấm lần nữa để
+  XÁC NHẬN reset'; tab Dàn máy vẫn mặc định.
+- Quét toàn bộ thân mọi response API trong phiên: mật khẩu
+  Gmail + mật khẩu heo KHÔNG xuất hiện ở đâu.
+
+**Chạy lại hồi quy: verify-stage2.js 38 PASS, 0 FAIL;
+verify-stage3.js 41 PASS, 0 FAIL; verify-stage31.js 29 PASS,
+0 FAIL; verify-stage32.js 54 PASS, 0 FAIL; verify-stage321.js
+18 PASS, 0 FAIL; verify-stage322.js 16 PASS, 0 FAIL;
+verify-stage323.js 25 PASS, 0 FAIL; verify-stage324.js 18
+PASS, 0 FAIL** — đúng nguyên số đếm trước, không hồi quy.
+
+LƯU Ý: kiểm chứng bằng fake agent. Reset từ xa chỉ chạy được
+trên máy đã ghi danh Device Owner bằng QR (giới hạn của
+Android, đã ghi rõ trong HUONG-DAN); cần người dùng thử nút
+Reset + Xoá + Thêm máy trên dàn máy thật để xác nhận dứt điểm.

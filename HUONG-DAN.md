@@ -1,4 +1,54 @@
-# Farm Control — Giai đoạn 3.2: Hướng dẫn
+# Farm Control — Giai đoạn 3.3: Hướng dẫn
+
+> **BẢN 3.3 (2026-11-16)** — Thêm 3 tính năng ở tab
+> **📱 Dàn máy** theo yêu cầu của huynh. App Farm Agent
+> KHÔNG đổi (vẫn v3.1, không cần cài lại).
+>
+> **1. Nút "↺ Reset máy" trên mỗi thẻ máy** — reset nhà máy
+> từ xa, đúng kiểu huynh đã chốt: máy xoá sạch về trạng thái
+> ban đầu, sau đó quét QR 1 lần là agent tự cài lại. Để
+> tránh bấm nhầm, nút có **xác nhận 2 bước**: bấm lần 1 nút
+> đổi thành "⚠ Bấm lần nữa để XÁC NHẬN reset" (trong 5
+> giây), bấm lần 2 mới thật sự reset. **Điều kiện: máy phải
+> là Device Owner** (đã ghi danh bằng QR) — máy chưa phải
+> Device Owner sẽ báo rõ "Máy chưa phải Device Owner — cần
+> cấp quyền chủ máy bằng QR trước khi reset từ xa". Reset
+> KHÔNG xoá hồ sơ máy và KHÔNG trả tài khoản đã cấp về kho
+> — server vẫn theo dõi máy đó liên tục.
+>
+> **✅ Checklist sau khi reset máy xong:** (1) Ở màn hình
+> chào đầu tiên, chạm 6 lần vào cùng một chỗ → kết nối WiFi
+> → **quét mã QR ghi danh** ở mục "➕ Thêm máy" (máy tự cài
+> Farm Agent + tự nhận quyền chủ máy). (2) Mở app Farm
+> Agent, **nhập IP của MacBook + cổng 8787 + nhãn máy**,
+> bấm "Lưu & Kết nối". (3) **Bật Trợ năng** cho Farm Agent
+> trong app. Xong — máy hiện lại trên trang điều khiển.
+>
+> **2. Nút "🗑 Xoá máy" trên mỗi thẻ máy** — xoá hồ sơ máy
+> khỏi danh sách (bấm được cả khi máy offline, tiện dọn các
+> máy cũ). Khi xoá: tài khoản Gmail và TK heo đã cấp cho
+> máy đó **tự trả về kho** (trạng thái sẵn sàng), tiến độ
+> điểm danh của máy bị xoá. Có hộp xác nhận trước khi xoá.
+> Nếu máy kết nối lại sau này, nó hiện lại như một máy mới.
+>
+> **3. Mục "➕ Thêm máy" ở tab Dàn máy** — gom sẵn mã QR
+> ghi danh + link tải app (/apks/agent.apk) + 2 danh sách
+> bước: **(A)** máy mới / máy vừa reset nhà máy → quét QR;
+> **(B)** máy đang dùng sẵn → cài APK trực tiếp.
+>
+> **Cách cập nhật lên 3.3:** (1) Dừng server cũ (Ctrl+C
+> trong cửa sổ Terminal đang chạy server). (2) Giải nén gói
+> 3.3. (3) Chép **toàn bộ file trong thư mục `data/` của
+> server cũ** (bản đang dùng) đè sang thư mục `data/` của
+> server 3.3 — để giữ kho Gmail, kho heo, link game và tiến
+> độ điểm danh. (4) Vào thư mục `server` của bản 3.3 và
+> chạy `node server.js`.
+>
+> **⚠️ QUAN TRỌNG: sau khi chép file `data/` xong và chạy
+> server mới, hãy mở tab "Kho dữ liệu" trên trang điều
+> khiển và KIỂM TRA kho Gmail / kho heo đã hiện đúng tài
+> khoản của huynh CHƯA, rồi mới chạy bất cứ tác vụ nào.**
+
 
 > **BẢN 3.2.4 (hotfix, 2026-11-16)** — Sửa lỗi vẫn không bấm
 > được nút Tiếp theo trên máy thật (Sony SOV37) khi chạy bản

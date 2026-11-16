@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Farm Control — Điều khiển dàn máy (Giai đoạn 3.2)</title>
+<title>Farm Control — Điều khiển dàn máy (Giai đoạn 3.3)</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: linear-gradient(160deg, #f5f3ff 0%, #fdf4ff 55%, #eff6ff 100%); color: #1e1b2e; font-size: 15.5px; }
@@ -24,6 +24,8 @@
   .tabbtn.active { background: linear-gradient(90deg, #7c3aed, #db2777); color: #fff; border-color: transparent; box-shadow: 0 3px 10px rgba(124,58,237,.35); }
   .panel { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(109,40,217,.12); }
   .panel h2 { margin: 0 0 10px; font-size: 18px; color: #4c1d95; }
+  .panel h3 { margin: 14px 0 6px; font-size: 16px; color: #4c1d95; }
+  .stepsnum { margin: 4px 0 10px 22px; padding: 0; font-size: 14.5px; line-height: 1.65; }
   .panelpage { display: none; }
   .panelpage.active { display: block; }
   #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(305px, 1fr)); gap: 12px; margin-bottom: 14px; }
@@ -90,7 +92,7 @@
 </head>
 <body>
 <header>
-  <h1>🌾 Farm Control — Điều khiển dàn máy (Giai đoạn 3.2)</h1>
+  <h1>🌾 Farm Control — Điều khiển dàn máy (Giai đoạn 3.3)</h1>
   <p><span class="dot" id="serverDot"></span><span id="serverInfo">Đang nối server...</span></p>
 </header>
 <main>
@@ -120,10 +122,28 @@
     <div id="devices"></div>
 
     <div class="panel" id="qrPanel">
-      <h2>📷 Ghi danh Device Owner (QR)</h2>
-      <div class="small">Dùng cho máy vừa factory reset: ở màn hình chào đầu tiên, chạm 6 lần để mở quét QR, kết nối WiFi rồi quét mã chứa nội dung JSON dưới đây (dán JSON vào bất kỳ trang tạo mã QR nào). Sau ghi danh, máy mới reset từ xa được. Chi tiết từng bước xem file HUONG-DAN.md.</div>
+      <h2>➕ Thêm máy</h2>
+      <div class="small">Hai cách thêm một máy vào dàn: <b>(A)</b> máy mới hoặc máy vừa reset nhà máy — ghi danh bằng QR để máy thành <b>Device Owner</b> (sau này reset từ xa được); <b>(B)</b> máy đang dùng sẵn — cài app Farm Agent trực tiếp bằng file APK.</div>
+
+      <h3>A. Máy mới / máy vừa reset nhà máy — quét QR ghi danh</h3>
+      <ol class="stepsnum">
+        <li>Mở máy — ở màn hình chào đầu tiên, <b>chạm 6 lần vào cùng một chỗ</b> để mở chế độ quét mã QR.</li>
+        <li>Kết nối WiFi (cùng mạng với MacBook chạy server) rồi <b>quét mã QR ghi danh</b> bên dưới (bấm “Tải nội dung QR”, chép JSON dán vào bất kỳ trang tạo mã QR nào để lấy mã).</li>
+        <li>Máy <b>tự cài Farm Agent + tự nhận quyền chủ máy (Device Owner)</b> — không cần thao tác thêm.</li>
+        <li>Mở app Farm Agent trên máy, nhập <b>IP của MacBook + cổng 8787 + nhãn máy</b> (ví dụ “01”), bấm “Lưu &amp; Kết nối”.</li>
+        <li>Bấm nút trong app để <b>bật Trợ năng</b> cho Farm Agent. Xong — máy hiện ở danh sách phía trên.</li>
+      </ol>
       <div class="row"><button id="qrLoad" class="ghost">Tải nội dung QR</button><button id="qrCopy" class="ghost" disabled>Chép JSON</button></div>
       <pre class="qr" id="qrPre" style="display:none"></pre>
+
+      <h3>B. Máy đang dùng sẵn — cài APK trực tiếp</h3>
+      <ol class="stepsnum">
+        <li>Tải app Farm Agent: <a href="/apks/agent.apk"><b>/apks/agent.apk</b></a> (mở link này ngay trên điện thoại, cùng WiFi với MacBook).</li>
+        <li>Cài file APK vừa tải (cho phép “cài từ nguồn không rõ” nếu máy hỏi).</li>
+        <li>Mở app, nhập <b>IP của MacBook + cổng 8787 + nhãn máy</b>, bấm “Lưu &amp; Kết nối”.</li>
+        <li><b>Bật Trợ năng</b> cho Farm Agent + <b>cấp quyền chụp màn hình</b> (“Bắt đầu ngay”) trong app. Xong — máy hiện ở danh sách phía trên.</li>
+      </ol>
+      <div class="small">Lưu ý: cách B không có quyền Device Owner nên <b>không reset nhà máy từ xa được</b> — muốn reset từ xa phải ghi danh theo cách A.</div>
     </div>
   </section>
 
@@ -296,6 +316,7 @@ var logHdEl = document.getElementById('logHd');
 var shots = {}; // deviceId -> base64 image
 var lastDevices = [];
 var selectedMap = {}; // deviceId -> true/false (giu qua cac lan lam moi)
+var resetArm = {}; // deviceId -> thoi diem het han (ms) cua trang thai "cho xac nhan reset" (Giai doan 3.3)
 var prevRunSnapshot = '';
 var currentRunId = null;
 
@@ -463,6 +484,25 @@ function renderDevices(list) {
     addBtn('Chụp màn hình', function () { sendCmd(d.id, d.label || d.id, 'screenshot', {}); });
     addBtn('✉️ Cấp Gmail', function () { startPipeline('cap-gmail-tu-dong', [d.id], {}, 'Cấp Gmail tự động → ' + (d.label || d.id)); }, 'warn');
     addBtn('Xem riêng', function () { openModal(d); }, 'ghost');
+    // Giai doan 3.3: Reset may (xac nhan 2 buoc ngay tren nut) + Xoa may.
+    var armed = resetArm[d.id] && resetArm[d.id] > Date.now();
+    var resetBtn = mkBtn(armed ? '⚠ Bấm lần nữa để XÁC NHẬN reset' : '↺ Reset máy', function () {
+      if (!(resetArm[d.id] && resetArm[d.id] > Date.now())) {
+        resetArm[d.id] = Date.now() + 5000;
+        logLine('↺ Reset máy ' + (d.label || d.id) + ': bấm nút Reset LẦN NỮA trong 5 giây để XÁC NHẬN — máy sẽ bị xoá sạch về trạng thái nhà máy!', 'wait');
+        renderDevices(lastDevices);
+        setTimeout(function () {
+          if (resetArm[d.id] && resetArm[d.id] <= Date.now()) { delete resetArm[d.id]; renderDevices(lastDevices); }
+        }, 5200);
+        return;
+      }
+      delete resetArm[d.id];
+      resetDevice(d);
+    }, 'danger');
+    resetBtn.disabled = dis;
+    btns.appendChild(resetBtn);
+    var delBtn = mkBtn('🗑 Xoá máy', function () { deleteDeviceUi(d); }, 'danger');
+    btns.appendChild(delBtn);
     card.appendChild(btns);
 
     if (shots[d.id]) {
@@ -486,6 +526,52 @@ document.getElementById('selNone').onclick = function () {
   lastDevices.forEach(function (d) { selectedMap[d.id] = false; });
   renderDevices(lastDevices);
 };
+
+// ---------- Reset may / Xoa may (Giai doan 3.3) ----------
+function resetDevice(d) {
+  var label = d.label || d.id;
+  logLine('↺ ' + label + ' → gửi lệnh RESET NHÀ MÁY...', 'wait');
+  fetch('/api/devices/reset', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: d.id })
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) {
+      logLine('↺ ' + label + ': ĐÃ GỬI LỆNH RESET NHÀ MÁY — máy sẽ xoá sạch và khởi động lại. Khi máy lên màn hình cài đặt, quét QR ghi danh ở mục “➕ Thêm máy” để agent tự cài lại.', true);
+    } else if (j && j.error === 'not_device_owner') {
+      logLine('↺ ' + label + ': KHÔNG reset được — ' + (j.message || 'Máy chưa phải Device Owner — cần cấp quyền chủ máy bằng QR trước khi reset từ xa'), false);
+    } else {
+      logLine('↺ ' + label + ': reset thất bại: ' + errText(j && j.error), false);
+    }
+    refreshDevices();
+  }).catch(function (e) {
+    logLine('↺ ' + label + ': lỗi kết nối server (' + e + ')', false);
+  });
+}
+function deleteDeviceUi(d) {
+  var label = d.label || d.id;
+  if (!confirm('Xoá máy ' + label + ' khỏi danh sách?\n\nHồ sơ máy sẽ bị xoá khỏi server; tài khoản Gmail và TK heo đã cấp cho máy này sẽ được TRẢ VỀ KHO (trạng thái sẵn sàng) và tiến độ điểm danh của máy sẽ bị xoá.\n\nNếu máy kết nối lại sau này, nó sẽ hiện lại như một máy mới.')) return;
+  fetch('/api/devices/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: d.id })
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) {
+      var extra = '';
+      if (j.released && j.released.gmail) extra += ' Gmail ' + j.released.gmail + ' đã trả về kho.';
+      if (j.released && j.released.heo) extra += ' TK heo ' + j.released.heo + ' đã trả về kho.';
+      logLine('🗑 Đã xoá máy ' + label + ' khỏi danh sách.' + extra, true);
+      delete selectedMap[d.id];
+      delete shots[d.id];
+      delete resetArm[d.id];
+    } else {
+      logLine('🗑 Xoá máy ' + label + ' thất bại: ' + ((j && j.error) || '?'), false);
+    }
+    refreshDevices();
+    refreshPools();
+    refreshCheckin();
+  }).catch(function (e) {
+    logLine('🗑 Xoá máy ' + label + ': lỗi kết nối server (' + e + ')', false);
+  });
+}
 
 // ---------- Modal xem rieng ----------
 var modalDev = null;
@@ -958,7 +1044,7 @@ refreshRuns();
 refreshEvents();
 refreshCheckin();
 setInterval(function () { refreshDevices(); refreshPools(); refreshRuns(); refreshEvents(); refreshCheckin(); }, 3000);
-logLine('Dashboard Giai đoạn 3.2 đã mở. Đang chờ máy kết nối...', null);
+logLine('Dashboard Giai đoạn 3.3 đã mở. Đang chờ máy kết nối...', null);
 hdLogLine('Sẵn sàng: Điểm danh 14 ngày · Tự động xem video · Check heo (cần link game chuyên dụng).', null);
 </script>
 </body>
