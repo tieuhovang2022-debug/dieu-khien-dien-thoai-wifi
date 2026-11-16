@@ -834,6 +834,47 @@ async function tapMarkerWithRetry(deviceId, markers, opts) {
 }
 
 /**
+ * Hotfix 3.2.2 — nhap text kieu THU LAI khi o chua kip focus (no_focus).
+ * Tren may that (Sony SOV37, chay that 2026-11-16 voi ban 3.2.1): man
+ * hinh dang nhap Google mo va nhan dien duoc, server cham vao o
+ * EditText nhung lenh input_text tra loi no_focus — o chua kip nhan
+ * input-focus tai thoi diem do (tre focus/IME sau lan cham), trong
+ * khi mot lan chay cham hon (nhip tay) thi nhap duoc binh thuong.
+ * no_focus la loi TAM THOI: cho intervalMs roi thu lai, toi da
+ * attempts lan; loi khac thi tra ve ngay. Tra { ok, error, attempts }.
+ * Qua opts.log chi ghi MOT su kien cho doi (tranh spam su kien).
+ * AN TOAN: text (co the la mat khau) CHI di qua lenh input_text tren
+ * kenh agent; su kien cho doi KHONG chua text.
+ */
+async function inputTextWithRetry(deviceId, text, opts) {
+  opts = opts || {};
+  const attempts = opts.attempts || 6;
+  const intervalMs = opts.intervalMs || 1500;
+  const log = opts.log || null;
+  let loggedWaiting = false;
+  let lastError = 'unknown';
+  for (let i = 1; i <= attempts; i++) {
+    let res = null;
+    try {
+      res = await sendCommand(deviceId, 'input_text', { text: text }, CMD_TIMEOUT_MS);
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e), attempts: i };
+    }
+    if (res && res.ok) return { ok: true, res: res, attempts: i };
+    lastError = (res && res.error) || 'unknown';
+    if (lastError !== 'no_focus') return { ok: false, error: lastError, attempts: i };
+    if (i < attempts) {
+      if (log && !loggedWaiting) {
+        log('Ô nhập chưa sẵn sàng (no_focus) — chờ ô nhập focus rồi nhập lại...');
+        loggedWaiting = true;
+      }
+      await sleepMs(intervalMs);
+    }
+  }
+  return { ok: false, error: lastError, attempts: attempts };
+}
+
+/**
  * Cua so ~8 giay sau khi bam Tiep theo o man hinh mat khau: neu thay nut
  * Dong y (dieu khoan) thi cham (dung sai — khong thay cung khong sao).
  * Thoat som neu qua >= 3 giay ma man hinh khong con bat ky dau chu dang
@@ -898,20 +939,17 @@ async function gmailSigninSequence(deviceId, acct, hooks) {
     return out;
   }
 
-  // Buoc 4: cham o email + nhap email
+  // Buoc 4: cham o email + nhap email — nghi ~800ms cho o on dinh roi
+  // nhap bang helper THU LAI khi no_focus (hotfix 3.2.2: tren may that
+  // o chua kip focus tai thoi diem input_text dau tien).
   if (!await tapFirstEditText(deviceId, emailDump.nodes)) {
     out.note = 'Không chạm được ô nhập email trên màn hình đăng nhập Google';
     return out;
   }
-  await sleepMs(400);
-  try {
-    res = await sendCommand(deviceId, 'input_text', { text: acct.email }, CMD_TIMEOUT_MS);
-  } catch (e) {
-    out.note = 'Không nhập được email: ' + (e && e.message || e);
-    return out;
-  }
-  if (!res || !res.ok) {
-    out.note = 'Không nhập được email: ' + ((res && res.error) || 'unknown');
+  await sleepMs(800);
+  const inpEmail = await inputTextWithRetry(deviceId, acct.email, { log: log });
+  if (!inpEmail.ok) {
+    out.note = 'Không nhập được email: ' + inpEmail.error;
     return out;
   }
   out.emailTyped = true;
@@ -963,20 +1001,16 @@ async function gmailSigninSequence(deviceId, acct, hooks) {
   }
 
   if (pwDump) {
-    // Buoc 7: cham o mat khau + nhap mat khau (CHI qua kenh agent)
+    // Buoc 7: cham o mat khau + nhap mat khau (CHI qua kenh agent) —
+    // nghi ~800ms + helper THU LAI khi no_focus nhu buoc 4 (3.2.2).
     if (!await tapFirstEditText(deviceId, pwDump.nodes)) {
       out.note = 'Không chạm được ô nhập mật khẩu';
       return out;
     }
-    await sleepMs(400);
-    try {
-      res = await sendCommand(deviceId, 'input_text', { text: acct.password }, CMD_TIMEOUT_MS);
-    } catch (e) {
-      out.note = 'Không nhập được mật khẩu: ' + (e && e.message || e);
-      return out;
-    }
-    if (!res || !res.ok) {
-      out.note = 'Không nhập được mật khẩu: ' + ((res && res.error) || 'unknown');
+    await sleepMs(800);
+    const inpPass = await inputTextWithRetry(deviceId, acct.password, { log: log });
+    if (!inpPass.ok) {
+      out.note = 'Không nhập được mật khẩu: ' + inpPass.error;
       return out;
     }
     out.passwordTyped = true;
@@ -1104,20 +1138,16 @@ async function tiktokLoginSequence(deviceId, acct, hooks) {
     if (how === 'stopped') { out.outcome = 'stopped'; return out; }
   }
 
-  // Buoc 3: cham o nhap + nhap username
+  // Buoc 3: cham o nhap + nhap username — nghi ~800ms + helper THU
+  // LAI khi no_focus (hotfix 3.2.2, cung mau voi dang nhap Google).
   if (!await tapFirstEditText(deviceId, userDump.nodes)) {
     out.note = 'Không chạm được ô nhập tài khoản trên màn hình đăng nhập TikTok Lite';
     return out;
   }
-  await sleepMs(400);
-  try {
-    res = await sendCommand(deviceId, 'input_text', { text: acct.username }, CMD_TIMEOUT_MS);
-  } catch (e) {
-    out.note = 'Không nhập được tài khoản: ' + (e && e.message || e);
-    return out;
-  }
-  if (!res || !res.ok) {
-    out.note = 'Không nhập được tài khoản: ' + ((res && res.error) || 'unknown');
+  await sleepMs(800);
+  const inpUser = await inputTextWithRetry(deviceId, acct.username, { log: log });
+  if (!inpUser.ok) {
+    out.note = 'Không nhập được tài khoản: ' + inpUser.error;
     return out;
   }
   out.usernameTyped = true;
@@ -1166,20 +1196,16 @@ async function tiktokLoginSequence(deviceId, acct, hooks) {
   }
 
   if (pwDump) {
-    // Buoc 6: cham o mat khau + nhap mat khau (CHI qua kenh agent)
+    // Buoc 6: cham o mat khau + nhap mat khau (CHI qua kenh agent) —
+    // nghi ~800ms + helper THU LAI khi no_focus nhu buoc 3 (3.2.2).
     if (!await tapFirstEditText(deviceId, pwDump.nodes)) {
       out.note = 'Không chạm được ô nhập mật khẩu';
       return out;
     }
-    await sleepMs(400);
-    try {
-      res = await sendCommand(deviceId, 'input_text', { text: acct.password }, CMD_TIMEOUT_MS);
-    } catch (e) {
-      out.note = 'Không nhập được mật khẩu: ' + (e && e.message || e);
-      return out;
-    }
-    if (!res || !res.ok) {
-      out.note = 'Không nhập được mật khẩu: ' + ((res && res.error) || 'unknown');
+    await sleepMs(800);
+    const inpPass2 = await inputTextWithRetry(deviceId, acct.password, { log: log });
+    if (!inpPass2.ok) {
+      out.note = 'Không nhập được mật khẩu: ' + inpPass2.error;
       return out;
     }
     out.passwordTyped = true;

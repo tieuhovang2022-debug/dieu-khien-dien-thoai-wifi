@@ -1,5 +1,25 @@
 # Farm Control — Giai đoạn 3.2: Hướng dẫn
 
+> **BẢN 3.2.2 (hotfix, 2026-11-16)** — Sửa lỗi gặp tiếp trên máy
+> thật (Sony SOV37) khi chạy bản 3.2.1: flow "Cấp Gmail tự động" mở
+> được màn hình đăng nhập Google nhưng báo "Không nhập được email:
+> no_focus" — ô nhập chưa kịp nhận focus tại thời điểm server gõ
+> chữ vào (trễ focus/bàn phím ngay sau lần chạm). Bản 3.2.2 cho
+> server **nghỉ ~0,8 giây sau khi chạm ô rồi mới nhập, và tự nhập
+> lại tối đa 6 lần (mỗi lần cách nhau 1,5 giây) khi gặp lỗi
+> no_focus** — áp dụng cho cả nhập email + mật khẩu của đăng nhập
+> Google và nhập tài khoản + mật khẩu của đăng nhập TikTok Lite.
+> Marker nhận diện KHÔNG đổi; app Farm Agent KHÔNG đổi (vẫn v3.1,
+> không cần cài lại).
+>
+> **Cách cập nhật lên 3.2.2:** (1) Dừng server cũ (Ctrl+C trong
+> cửa sổ Terminal đang chạy server). (2) Giải nén gói 3.2.2.
+> (3) Chép **toàn bộ file trong thư mục `data/` của server cũ**
+> (bản đang dùng) đè sang thư mục `data/` của server 3.2.2 — để
+> giữ kho Gmail, kho heo, link game và tiến độ điểm danh. (4) Vào
+> thư mục `server` của bản 3.2.2 và chạy `node server.js`. Xong —
+> mở lại trang điều khiển và chạy lại "Cấp Gmail" để kiểm tra.
+
 > **BẢN 3.2.1 (hotfix, 2026-11-16)** — Sửa lỗi gặp trên máy thật
 > (Sony SOV37): khi chạy "Cấp Gmail tự động", máy đã mở được màn hình
 > đăng nhập Google và đã tự nhập email, nút "Tiếp theo" hiện rõ trên

@@ -13,6 +13,14 @@
 //   FAKE_ACCESSIBILITY=0 -> status bao accessibility:false, lenh thao tac tra loi no_accessibility
 //                           (mac dinh: accessibility:true)
 //   FAKE_NO_FOCUS=1      -> input_text tra loi no_focus
+//   FAKE_NO_FOCUS_FIRST=n -> (Hotfix 3.2.2) n lan input_text DAU TIEN
+//                           cua phien tra loi no_focus (o chua kip
+//                           focus nhu may that), tu lan thu n+1 tro
+//                           di thi binh thuong. Moi lan loi ghi vao
+//                           cmdLog dong "input_text:no_focus" de
+//                           script kiem chung thay duoc cac lan server
+//                           thu lai. FAKE_NO_FOCUS=1 van uu tien (loi
+//                           toan thoi gian, giu nguyen cho test cu).
 //   FAKE_CHECKIN_AFTER=n -> tu lan dump_ui MAN HINH TIKTOK thu n tro di,
 //                           trong danh sach node xuat hien chu
 //                           "チェックイン完了" (mo phong man hinh bao
@@ -59,6 +67,9 @@ const ANDROID_ID = process.env.FAKE_ANDROID_ID || 'fake-device-001';
 const IS_DEVICE_OWNER = process.env.FAKE_DEVICE_OWNER === '1';
 const HAS_ACCESSIBILITY = process.env.FAKE_ACCESSIBILITY !== '0';
 const NO_FOCUS = process.env.FAKE_NO_FOCUS === '1';
+const NO_FOCUS_FIRST = process.env.FAKE_NO_FOCUS_FIRST ? parseInt(process.env.FAKE_NO_FOCUS_FIRST, 10) : 0;
+// So lan input_text con phai tra no_focus theo FAKE_NO_FOCUS_FIRST.
+let noFocusFirstLeft = NO_FOCUS_FIRST;
 const CHECKIN_AFTER = process.env.FAKE_CHECKIN_AFTER ? parseInt(process.env.FAKE_CHECKIN_AFTER, 10) : 0;
 const FAKE_VERIFY = process.env.FAKE_VERIFY === '1';
 const FAKE_TT_VERIFY = process.env.FAKE_TT_VERIFY === '1';
@@ -370,6 +381,15 @@ function handleCmd(msg) {
     case 'input_text':
       if (!HAS_ACCESSIBILITY) { result(msg.id, false, 'no_accessibility', null); break; }
       if (NO_FOCUS) { result(msg.id, false, 'no_focus', null); break; }
+      // Hotfix 3.2.2: FAKE_NO_FOCUS_FIRST=n — n lan input_text dau
+      // tien tra no_focus (mo phong o chua kip focus tren may that),
+      // ghi cmdLog "input_text:no_focus" de thay cac lan thu lai.
+      if (noFocusFirstLeft > 0) {
+        noFocusFirstLeft--;
+        logCmd('input_text:no_focus');
+        result(msg.id, false, 'no_focus', null);
+        break;
+      }
       // Ghi nhat ky theo man hinh dang nhap: email ghi ro (khong nhay cam),
       // mat khau CHI ghi dang che — khong bao gio ghi mat khau that.
       if (signinState === 'email') logCmd('input_text(email):' + (args.text || ''));

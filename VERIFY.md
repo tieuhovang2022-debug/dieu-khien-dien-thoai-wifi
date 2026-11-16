@@ -456,3 +456,81 @@ LƯU Ý: kiểm chứng trên vẫn là với fake agent — nhưng lần này f
 agent mô phỏng đúng hiện tượng đã quan sát trên máy thật (nút hiện
 trễ trong cây accessibility). Cần chạy lại flow Cấp Gmail trên máy
 SOV37 thật để xác nhận dứt điểm.
+
+---
+
+## Giai đoạn 3.2.2 — Hotfix lỗi máy thật thứ hai: ô nhập chưa kịp focus (input_text trả no_focus) (2026-11-16)
+
+### Bằng chứng từ máy thật (Sony SOV37, bản 3.2.1)
+
+Ảnh chụp màn hình console của server khi chạy flow "Cấp Gmail tự
+động" hai lần liên tiếp trên máy thật:
+
+```
+[event] gmail_signin SOV37 — Cấp Gmail tự động: đã mở màn hình đăng nhập Google, chờ ô nhập email...
+[pipeline] run-12-... gmail_signin: Tự đăng nhập Google chưa xong: Không nhập được email: no_focus
+[pipeline] run-13-... gmail_signin: Tự đăng nhập Google chưa xong: Không nhập được email: no_focus
+```
+
+Chẩn đoán: màn hình đăng nhập mở và được nhận diện, server chạm vào
+ô EditText, nhưng lệnh `input_text` trả `no_focus` — trên máy thật ô
+chưa kịp nhận input-focus tại thời điểm đó (trễ focus/IME ngay sau
+lần chạm), trong khi một lần chạy ở nhịp chậm hơn trước đó đã nhập
+được email thành công (ảnh chụp 19:03 cùng ngày: email đã nằm trong
+ô). Đây là lỗi THỜI ĐIỂM tạm thời, không phải lỗi marker hay lỗi ô
+nhập — KHÔNG đổi flow-config, KHÔNG đổi agent.
+
+### Cách sửa (chỉ server.js; agent Android và flow-config không đổi)
+
+- Thêm helper `inputTextWithRetry(deviceId, text, { attempts: 6,
+  intervalMs: 1500, log })`: gọi lệnh `input_text`; CHỈ thử lại khi
+  lỗi là `no_focus` (chờ 1,5 giây giữa các lần, tối đa 6 lần); lỗi
+  khác trả về ngay; ngoại lệ gửi lệnh cũng trả về ngay. Qua `log`
+  chỉ ghi ĐÚNG MỘT sự kiện chờ ("Ô nhập chưa sẵn sàng (no_focus) —
+  chờ ô nhập focus rồi nhập lại...") để không spam nhật ký; text —
+  nhất là mật khẩu — không bao giờ xuất hiện trong sự kiện.
+- `gmailSigninSequence()`: dùng helper cho CẢ nhập email và nhập
+  mật khẩu; sau khi chạm ô, nghỉ ~800ms (trước là 400ms) trước lần
+  nhập đầu tiên.
+- `tiktokLoginSequence()`: dùng helper + nghỉ ~800ms tương tự cho
+  nhập username và nhập mật khẩu.
+- Mọi ghi chú lỗi giữ nguyên dạng cũ ("Không nhập được email:
+  no_focus", ...), hành vi dừng Chờ chạm tay và cách che mật khẩu
+  không đổi.
+
+### Fake agent — mô phỏng lỗi máy thật
+
+- Env mới `FAKE_NO_FOCUS_FIRST=<n>`: n lần `input_text` ĐẦU TIÊN
+  của phiên trả `no_focus`, từ lần thứ n+1 trở đi bình thường. Mỗi
+  lần lỗi ghi vào cmdLog dòng `input_text:no_focus` để script kiểm
+  chứng thấy được các lần server thử lại. Chế độ cũ
+  `FAKE_NO_FOCUS=1` (lỗi toàn thời gian, dùng cho test Giai đoạn 2)
+  giữ nguyên, vẫn ưu tiên trước.
+
+### Kết quả kiểm chứng (fake agent, vòng kín)
+
+**verify-stage322.js (mới): 16 PASS, 0 FAIL**, gồm:
+
+- (a) Với FAKE_NO_FOCUS_FIRST=2, flow cap-gmail-tu-dong vẫn chạy
+  đến `done`; cmdLog cho thấy đúng thứ tự:
+  `open_google_signin → input_text:no_focus → input_text:no_focus →
+  input_text(email) → tap_text:次へ → input_text(password):********
+  → tap_text:次へ`; sự kiện chờ-đợi no_focus chỉ ghi đúng 1 lần.
+- (b) Với FAKE_NO_FOCUS_FIRST=99, flow dừng gọn ở trạng thái
+  `error` với ghi chú "Tự đăng nhập Google chưa xong: Không nhập
+  được email: no_focus" (không treo, không crash); helper thử đúng
+  6 lần (6 dòng `input_text:no_focus` trong cmdLog).
+- (c) Quét toàn bộ thân mọi response API trong phiên + /api/events:
+  mật khẩu thử (2 tài khoản) KHÔNG xuất hiện ở đâu.
+- Chạy thêm verify-stage322.js trên bản server ĐÃ ĐÓNG GÓI trong
+  thư mục giao hàng (farm-agent-giai-doan-3-2-2): 16 PASS, 0 FAIL.
+
+**Chạy lại hồi quy: verify-stage2.js 38 PASS, 0 FAIL;
+verify-stage3.js 41 PASS, 0 FAIL; verify-stage31.js 29 PASS,
+0 FAIL; verify-stage32.js 54 PASS, 0 FAIL; verify-stage321.js
+18 PASS, 0 FAIL** — đúng nguyên số đếm trước hotfix, không hồi quy.
+
+LƯU Ý: kiểm chứng trên vẫn là với fake agent — nhưng fake agent
+lần này mô phỏng đúng hiện tượng đã quan sát trên máy thật (ô nhập
+chưa kịp focus ở những lần input_text đầu tiên). Cần chạy lại flow
+Cấp Gmail trên máy SOV37 thật (bản 3.2.2) để xác nhận dứt điểm.
