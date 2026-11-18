@@ -1006,3 +1006,47 @@ HUONG-DAN.md của gói).
 ghi — `foregroundPackage` và ảnh theo tham số được kiểm chứng
 tĩnh (manifest/cert) + vòng kín bằng fake agent đúng giao thức;
 xác nhận dứt điểm chờ cài đè lên máy thật (máy 02) như mọi đợt.
+
+## Giai đoạn 4 — Agent v4: video H.264 theo yêu cầu (2026-11-19)
+
+**Agent v4** (versionCode 7 / versionName "4.0", cùng package +
+cùng chữ ký mọi bản trước): thêm pipeline **video H.264 theo yêu
+cầu** phục vụ tool "Trung tâm điều khiển TikTok Lite" (server
+Farm Control hiện tại chưa dùng — giao thức tương thích ngược
+hoàn toàn, mọi lệnh v3.3 giữ nguyên).
+
+- **Pipeline:** MediaProjection (dùng chung bản vá Android 14
+  của 3.5: FGS type mediaProjection + một projection bền) →
+  VirtualDisplay riêng → MediaCodec H.264 phần cứng → Annex-B
+  (SPS/PPS + keyframe mỗi ~2s) qua **kết nối TCP thứ hai** về
+  cùng host:cổng của kênh lệnh (không dùng chung socket với
+  lệnh/result để khung lớn không chặn lệnh). Đầu kênh video:
+  dòng JSON `video_hello` → dòng JSON `video_format` → khung
+  nhị phân [4 byte BE độ dài][access unit].
+- **Tham số server yêu cầu lúc bắt đầu:** maxWidth 720,
+  bitrate 2,5 Mbps, fps 30, keyframe 2s (agent kẹp trong
+  khoảng an toàn: 120–1440px, 0,2–12 Mbps, 1–60fps, 1–10s).
+- **Kỷ luật pin/nhiệt:** encoder CHỈ chạy giữa `video_start`
+  và `video_stop`; tự dừng khi mất kênh lệnh, mất kênh video
+  hoặc projection bị dừng. Không ai xem = không mã hoá.
+- **Cổng cứng đạt:** apksigner SHA-256 =
+  `0c153ff07f181ca786a379ad4893adbb76066416b71533db452da0cb058b9a29`
+  (khớp mọi bản trước); aapt2 badging versionCode 7 / "4.0";
+  manifest giữ `foregroundServiceType=0x00000020`
+  (mediaProjection) + quyền FOREGROUND_SERVICE_MEDIA_PROJECTION.
+- **verify-stage2.js 38 PASS, 0 FAIL** (gồm check checksum QR
+  tự tính độc lập từ APK v4 thật — QR cấp máy Device Owner vẫn
+  khớp).
+- Phía tool TikTok Lite: fake agent có chế độ giả lập v4 stream
+  H.264 THẬT từ ffmpeg (testsrc2 640x360@30) — kiểm chứng trọn
+  vòng: chưa focus thì không stream; focus → SPS/PPS + keyframe
+  đầu sạch; ~29,8 fps đo được; 2 người xem cùng lúc; người vào
+  giữa luồng nhận keyframe trước; blur → agent dừng mã hoá;
+  lỗi quyền / đứt kênh → tự về ảnh tĩnh. Xem verify-tool.js của
+  tool (mục 16).
+
+**Giới hạn thành thật:** chưa có máy thật chạy v4 tại thời điểm
+ghi — chất lượng mã hoá/nhiệt độ trên máy thật và độ mượt giải
+mã trên trình duyệt thật chỉ xác nhận được khi cài đè lên máy
+thật; phía này kiểm chứng tĩnh (manifest/cert) + vòng kín bằng
+fake agent stream H.264 thật đúng giao thức.

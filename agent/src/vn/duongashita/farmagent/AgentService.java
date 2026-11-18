@@ -16,6 +16,9 @@ import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaFormat;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.net.ConnectivityManager;
@@ -30,6 +33,7 @@ import android.provider.Settings;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.view.Display;
+import android.view.Surface;
 import android.view.WindowManager;
 
 import org.json.JSONArray;
@@ -42,6 +46,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -106,6 +111,7 @@ public class AgentService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        stopVideoInternal();
         closeSocket();
         synchronized (captureLock) {
             releaseCaptureLocked(true);
@@ -155,6 +161,9 @@ public class AgentService extends Service {
             } catch (Exception e) {
                 setStatus("Mất kết nối (" + shortErr(e) + ") — thử lại sau " + (backoff / 1000) + "s");
             } finally {
+                // Mat kenh lenh = server khong con xem nua: dung
+                // encoder video ngay (khong ma hoa khi khong ai xem).
+                stopVideoInternal();
                 closeSocket();
             }
             if (!running) break;
@@ -284,7 +293,12 @@ public class AgentService extends Service {
         o.put("sdk", Build.VERSION.SDK_INT);
         o.put("androidId", androidId());
         o.put("battery", batteryLevel());
-        o.put("agentVersion", "3.3");
+        o.put("agentVersion", "4.0");
+        // Agent v4: co pipeline video H.264 theo yeu cau (lenh
+        // video_start/video_stop + kenh TCP rieng) — server cu bo
+        // qua truong nay, server moi dung de bat video cho may
+        // dang duoc dieu khien.
+        o.put("video", true);
         o.put("deviceOwner", isDeviceOwner(this));
         o.put("accessibility", FarmAccessibilityService.isRunning());
         putForegroundPackage(o);
@@ -474,6 +488,36 @@ public class AgentService extends Service {
                 r.put("data", d);
                 return r;
             }
+            case "video_start": {
+                // Agent v4: bat pipeline video H.264 (xem muc Video
+                // o cuoi file). Tham so do server gui: maxWidth
+                // (mac dinh 720), bitrate (mac dinh 2.5 Mbps), fps
+                // (mac dinh 30), keyframeSec (mac dinh 2) — gia tri
+                // ngoai khoang an toan thi kep lai o startVideo().
+                if (!MediaPerm.granted || MediaPerm.data == null) {
+                    r.put("ok", false);
+                    r.put("error", "no_permission");
+                    return r;
+                }
+                String verr = startVideo(args);
+                if (verr != null) {
+                    r.put("ok", false);
+                    r.put("error", verr);
+                    return r;
+                }
+                JSONObject d = new JSONObject();
+                d.put("streaming", true);
+                d.put("width", videoW);
+                d.put("height", videoH);
+                r.put("ok", true);
+                r.put("data", d);
+                return r;
+            }
+            case "video_stop": {
+                stopVideoInternal();
+                r.put("ok", true);
+                return r;
+            }
             case "factory_reset": {
                 if (!isDeviceOwner(this)) {
                     r.put("ok", false);
@@ -658,6 +702,7 @@ public class AgentService extends Service {
             // He thong / nguoi dung dung buoi chieu (hoac projection bi thu hoi):
             // don state + xoa consent da luu -> lan chup sau tra no_permission
             // de nguoi dung cap lai trong app, thay vi crash.
+            stopVideoInternal();
             synchronized (captureLock) {
                 releaseCaptureLocked(false);
                 MediaPerm.granted = false;
@@ -707,8 +752,8 @@ public class AgentService extends Service {
         capH = 0;
     }
 
-    /** Chi goi khi dang giu captureLock. Tao moi projection neu chua co; resize neu doi kich thuoc. */
-    private void ensureCaptureLocked(int maxWidth) throws Exception {
+    /** Kich thuoc dich (da scale theo maxWidth, chan) + dpi cua man hinh that. Tra {w, h, dpi}. */
+    private int[] scaledSize(int maxWidth) {
         WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         Display display = wm.getDefaultDisplay();
         android.graphics.Point size = new android.graphics.Point();
@@ -722,7 +767,44 @@ public class AgentService extends Service {
         if ((h % 2) == 1) h -= 1;
         DisplayMetrics metrics = new DisplayMetrics();
         display.getMetrics(metrics);
-        int dpi = metrics.densityDpi;
+        return new int[]{w, h, metrics.densityDpi};
+    }
+
+    /** Chi goi khi dang giu captureLock. Handler dung chung cho projection + cac VirtualDisplay. */
+    private Handler captureHandlerLocked() {
+        if (captureThread == null) {
+            captureThread = new HandlerThread("farm-shot");
+            captureThread.start();
+        }
+        return new Handler(captureThread.getLooper());
+    }
+
+    /**
+     * Chi goi khi dang giu captureLock. Tra MediaProjection dung chung
+     * (cho ca anh tinh lan video), tao moi neu chua co. FGS loai
+     * mediaProjection phai dang chay TRUOC getMediaProjection
+     * (Android 14) — goi lai startForeground co type ngay tai day cho
+     * chac; Callback dang ky TRUOC moi createVirtualDisplay.
+     */
+    private MediaProjection ensureProjectionLocked() throws Exception {
+        if (projection != null) return projection;
+        startForegroundTyped(statusText);
+        MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (mpm == null) throw new Exception("no_projection_service");
+        Intent dataCopy = new Intent(MediaPerm.data);
+        MediaProjection mp = mpm.getMediaProjection(MediaPerm.resultCode, dataCopy);
+        if (mp == null) throw new Exception("projection_failed");
+        mp.registerCallback(projectionCallback, captureHandlerLocked());
+        projection = mp;
+        return mp;
+    }
+
+    /** Chi goi khi dang giu captureLock. Tao moi projection neu chua co; resize neu doi kich thuoc. */
+    private void ensureCaptureLocked(int maxWidth) throws Exception {
+        int[] sz = scaledSize(maxWidth);
+        int w = sz[0];
+        int h = sz[1];
+        int dpi = sz[2];
 
         if (projection != null) {
             if (w != capW || h != capH) {
@@ -740,42 +822,20 @@ public class AgentService extends Service {
             return;
         }
 
-        // FGS loai mediaProjection phai dang chay TRUOC getMediaProjection
-        // (Android 14) — goi lai startForeground co type ngay tai day cho chac.
-        startForegroundTyped(statusText);
-        MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        if (mpm == null) throw new Exception("no_projection_service");
-        Intent dataCopy = new Intent(MediaPerm.data);
-        MediaProjection mp = mpm.getMediaProjection(MediaPerm.resultCode, dataCopy);
-        if (mp == null) throw new Exception("projection_failed");
-
-        HandlerThread ht = new HandlerThread("farm-shot");
-        ht.start();
-        Handler handler = new Handler(ht.getLooper());
-        // Android 14 bat buoc: dang ky MediaProjection.Callback TRUOC createVirtualDisplay.
-        mp.registerCallback(projectionCallback, handler);
+        MediaProjection mp = ensureProjectionLocked();
+        Handler handler = captureHandlerLocked();
         ImageReader reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
         VirtualDisplay vd;
         try {
             vd = mp.createVirtualDisplay("farmagent-shot", w, h, dpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, handler);
         } catch (Exception e) {
-            try {
-                mp.unregisterCallback(projectionCallback);
-            } catch (Exception ignored) {
-            }
-            try {
-                mp.stop();
-            } catch (Exception ignored) {
-            }
             reader.close();
-            ht.quitSafely();
+            releaseCaptureLocked(true);
             throw e;
         }
-        projection = mp;
         imageReader = reader;
         virtualDisplay = vd;
-        captureThread = ht;
         capW = w;
         capH = h;
     }
@@ -822,6 +882,271 @@ public class AgentService extends Service {
         Bitmap cropped = Bitmap.createBitmap(tmp, 0, 0, w, h);
         tmp.recycle();
         return cropped;
+    }
+
+    // ---------------- Video H.264 (agent v4) ----------------
+    // Pipeline theo yeu cau: MediaProjection (DUNG CHUNG voi anh tinh)
+    // -> VirtualDisplay rieng -> MediaCodec H.264 (phan cung) ->
+    // Annex-B qua MOT KET NOI TCP THU HAI ve dung host:port cua kenh
+    // lenh (khong dung chung socket voi lenh/result de khung lon
+    // khong chan lenh). Dinh dang tren kenh video:
+    //   dong 1 (JSON): {"type":"video_hello","androidId":...,"streamId":...}
+    //   dong 2 (JSON): {"type":"video_format","width":W,"height":H,"fps":F}
+    //   sau do lap: [4 byte BE do dai][1 access unit Annex-B]
+    // Access unit dau tien la codec-config (SPS+PPS), tiep theo la
+    // cac khung (keyframe co co BUFFER_FLAG_KEY_FRAME o phia encoder;
+    // server tu nhan dien IDR trong NAL).
+    // KY LUAT: encoder CHI chay khi server ra lenh video_start va
+    // dung ngay khi video_stop / mat kenh lenh / mat kenh video /
+    // projection bi dung — khong bao gio ma hoa khi khong ai xem
+    // (ton pin + nong may).
+
+    private final Object videoLock = new Object();
+    private MediaCodec videoEncoder;
+    private VirtualDisplay videoDisplay;
+    private Socket videoSocket;
+    private OutputStream videoOut;
+    private Thread videoThread;
+    private volatile boolean videoRunning = false;
+    private int videoW = 0;
+    private int videoH = 0;
+
+    /** Bat video. Tra null neu thanh cong, nguoc lai tra ma loi. */
+    private String startVideo(JSONObject args) {
+        int maxWidth = args.optInt("maxWidth", 720);
+        if (maxWidth < 120) maxWidth = 120;
+        if (maxWidth > 1440) maxWidth = 1440;
+        int bitrate = args.optInt("bitrate", 2500000);
+        if (bitrate < 200000) bitrate = 200000;
+        if (bitrate > 12000000) bitrate = 12000000;
+        int fps = args.optInt("fps", 30);
+        if (fps < 1) fps = 1;
+        if (fps > 60) fps = 60;
+        int keySec = args.optInt("keyframeSec", 2);
+        if (keySec < 1) keySec = 1;
+        if (keySec > 10) keySec = 10;
+
+        synchronized (videoLock) {
+            if (videoRunning) return null; // dang chay san — idempotent
+            String host = Prefs.host(this);
+            int port = Prefs.port(this);
+            if (host == null || host.trim().isEmpty()) return "no_server";
+            int[] sz = scaledSize(maxWidth);
+            int w = sz[0];
+            int h = sz[1];
+            int dpi = sz[2];
+            Socket vs = null;
+            try {
+                MediaProjection proj;
+                Handler handler;
+                synchronized (captureLock) {
+                    proj = ensureProjectionLocked();
+                    handler = captureHandlerLocked();
+                }
+                MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h);
+                format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+                format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
+                format.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
+                format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keySec);
+                MediaCodec encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+                encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+                Surface inputSurface = encoder.createInputSurface();
+                // Gan field ngay de catch ben ngoai don dep duoc neu
+                // cac buoc sau loi (releaseVideoLocked chiu trach nhiem).
+                videoEncoder = encoder;
+                VirtualDisplay vd = proj.createVirtualDisplay("farmagent-video", w, h, dpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, inputSurface, null, handler);
+                videoDisplay = vd;
+                encoder.start();
+
+                vs = new Socket();
+                vs.connect(new InetSocketAddress(host, port), 8000);
+                vs.setTcpNoDelay(true);
+                OutputStream out = vs.getOutputStream();
+                JSONObject hello = new JSONObject();
+                hello.put("type", "video_hello");
+                hello.put("androidId", androidId());
+                hello.put("streamId", androidId() + "-" + System.currentTimeMillis());
+                out.write((hello.toString() + "\n").getBytes("UTF-8"));
+                JSONObject fmt = new JSONObject();
+                fmt.put("type", "video_format");
+                fmt.put("width", w);
+                fmt.put("height", h);
+                fmt.put("fps", fps);
+                out.write((fmt.toString() + "\n").getBytes("UTF-8"));
+                out.flush();
+
+                videoSocket = vs;
+                videoOut = out;
+                videoW = w;
+                videoH = h;
+                videoRunning = true;
+                Thread t = new Thread(this::videoDrainLoop, "farm-agent-video");
+                t.setDaemon(true);
+                videoThread = t;
+                t.start();
+                return null;
+            } catch (Exception e) {
+                if (vs != null && videoSocket != vs) {
+                    try {
+                        vs.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+                releaseVideoLocked();
+                return "video_failed: " + shortErr(e);
+            }
+        }
+    }
+
+    /** Giai phong encoder/display/socket video. Chi goi khi dang giu videoLock; idempotent. */
+    private void releaseVideoLocked() {
+        if (videoEncoder != null) {
+            try {
+                videoEncoder.stop();
+            } catch (Exception ignored) {
+            }
+            try {
+                videoEncoder.release();
+            } catch (Exception ignored) {
+            }
+            videoEncoder = null;
+        }
+        if (videoDisplay != null) {
+            try {
+                videoDisplay.release();
+            } catch (Exception ignored) {
+            }
+            videoDisplay = null;
+        }
+        if (videoSocket != null) {
+            try {
+                videoSocket.close();
+            } catch (Exception ignored) {
+            }
+            videoSocket = null;
+        }
+        videoOut = null;
+        videoW = 0;
+        videoH = 0;
+    }
+
+    /** Dung video tu bat ky luong nao (lenh video_stop, mat ket noi, projection dung...). */
+    private void stopVideoInternal() {
+        Thread t;
+        synchronized (videoLock) {
+            videoRunning = false;
+            t = videoThread;
+            // Dong socket truoc de danh thuc moi lan ghi dang ket.
+            if (videoSocket != null) {
+                try {
+                    videoSocket.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (t != null && t != Thread.currentThread()) {
+            try {
+                t.join(1500);
+            } catch (InterruptedException ignored) {
+            }
+        }
+        synchronized (videoLock) {
+            videoThread = null;
+            releaseVideoLocked();
+        }
+    }
+
+    /** Ghi 1 access unit: [4 byte BE do dai][du lieu Annex-B]. Loi ghi -> dung video. */
+    private void sendVideoFrame(byte[] data) throws Exception {
+        OutputStream out;
+        synchronized (videoLock) {
+            out = videoOut;
+        }
+        if (out == null) throw new Exception("video_closed");
+        byte[] head = new byte[]{
+                (byte) (data.length >>> 24), (byte) (data.length >>> 16),
+                (byte) (data.length >>> 8), (byte) data.length};
+        synchronized (out) {
+            out.write(head);
+            out.write(data);
+            out.flush();
+        }
+    }
+
+    private void videoDrainLoop() {
+        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+        try {
+            while (videoRunning) {
+                MediaCodec encoder;
+                synchronized (videoLock) {
+                    encoder = videoEncoder;
+                }
+                if (encoder == null) break;
+                int idx;
+                try {
+                    idx = encoder.dequeueOutputBuffer(info, 100000);
+                } catch (Exception e) {
+                    break;
+                }
+                if (idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    // Gui codec-config (SPS + PPS, Annex-B) truoc moi khung.
+                    try {
+                        MediaFormat f = encoder.getOutputFormat();
+                        ByteBuffer csd0 = f.getByteBuffer("csd-0");
+                        ByteBuffer csd1 = f.getByteBuffer("csd-1");
+                        ByteArrayOutputStream cfg = new ByteArrayOutputStream();
+                        if (csd0 != null) {
+                            byte[] b = new byte[csd0.remaining()];
+                            csd0.get(b);
+                            cfg.write(b, 0, b.length);
+                        }
+                        if (csd1 != null) {
+                            byte[] b = new byte[csd1.remaining()];
+                            csd1.get(b);
+                            cfg.write(b, 0, b.length);
+                        }
+                        if (cfg.size() > 0) sendVideoFrame(cfg.toByteArray());
+                    } catch (Exception e) {
+                        break;
+                    }
+                } else if (idx >= 0) {
+                    boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                    try {
+                        ByteBuffer buf = encoder.getOutputBuffer(idx);
+                        if (buf != null && info.size > 0) {
+                            buf.position(info.offset);
+                            buf.limit(info.offset + info.size);
+                            byte[] data = new byte[info.size];
+                            buf.get(data);
+                            // Dau ra video/avc cua MediaCodec la Annex-B
+                            // san (co start code), ke ca buffer
+                            // BUFFER_FLAG_CODEC_CONFIG (SPS/PPS).
+                            sendVideoFrame(data);
+                        }
+                    } catch (Exception e) {
+                        try {
+                            encoder.releaseOutputBuffer(idx, false);
+                        } catch (Exception ignored) {
+                        }
+                        break;
+                    }
+                    try {
+                        encoder.releaseOutputBuffer(idx, false);
+                    } catch (Exception ignored) {
+                    }
+                    if (eos) break;
+                }
+            }
+        } finally {
+            // Kenh video chet / encoder loi / bi dung tu ngoai: tu don
+            // dep — server se thay kenh dong va chuyen ve anh tinh.
+            synchronized (videoLock) {
+                videoRunning = false;
+                if (videoThread == Thread.currentThread()) videoThread = null;
+                releaseVideoLocked();
+            }
+        }
     }
 
     // ---------------- Thong bao ----------------
