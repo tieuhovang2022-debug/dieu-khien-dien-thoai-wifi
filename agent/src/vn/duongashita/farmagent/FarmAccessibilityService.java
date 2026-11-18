@@ -42,6 +42,26 @@ public class FarmAccessibilityService extends AccessibilityService {
         return instance != null;
     }
 
+    /**
+     * Package cua cua so dang o foreground (goc cay tro nang hien
+     * tai) — agent v3.3. Chi co khi dich vu Tro nang dang chay;
+     * chua bat / khong doc duoc thi tra null (server se khong thay
+     * truong foregroundPackage trong hello/status/heartbeat).
+     * Khong can quyen bo sung nao (khong dung UsageStats).
+     */
+    public static String foregroundPackage() {
+        FarmAccessibilityService s = instance;
+        if (s == null) return null;
+        try {
+            AccessibilityNodeInfo root = s.getRootInActiveWindow();
+            if (root == null) return null;
+            CharSequence pkg = root.getPackageName();
+            return pkg == null ? null : pkg.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** Kiem tra ten dich vu co nam trong danh sach tro nang dang bat cua may khong. */
     public static boolean isEnabledInSettings(Context c) {
         try {

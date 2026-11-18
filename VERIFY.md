@@ -962,3 +962,47 @@ type mediaProjection + callback trước createVirtualDisplay +
 consent dùng 1 lần) và đã kiểm chứng tĩnh (manifest/cert) + vòng
 kín bằng fake agent, nhưng xác nhận dứt điểm phải chờ người dùng
 cài agent v3.2 đè lên máy '02' rồi mở lại trang /mirror.
+
+## Giai đoạn 3.6 — Agent v3.3 (2026-11-19)
+
+Chỉ thay agent (Farm Agent **versionCode 6 / versionName "3.3"**);
+server giữ nguyên của 3.5 (bản đóng gói `farm-agent-giai-doan-3-6`
+đã diff với 3.5: toàn bộ `server/` byte-identical, trừ chính
+`agent.apk` trong `server/public-apks/`; thêm ghi chú 3.6 ở đầu
+HUONG-DAN.md của gói).
+
+**Agent v3.3 thêm 2 khả năng, giao thức còn lại tương thích ngược:**
+
+1. Lệnh `screenshot` nhận tham số tùy chọn `maxWidth` (px, kẹp
+   120–1440) và `quality` (JPEG, kẹp 1–100). **Không gửi tham số
+   = đúng hành vi cũ** (rộng tối đa 720, quality 70) — server cũ
+   không bị ảnh hưởng.
+2. `foregroundPackage` trong hello/status/heartbeat (và data của
+   lệnh `status`): package của cửa sổ đang ở foreground, lấy từ
+   `getRootInActiveWindow().getPackageName()` của dịch vụ Trợ
+   năng. Trợ năng tắt → không có trường này. **Không thêm quyền
+   mới nào** (không dùng UsageStats).
+
+**Kiểm chứng:**
+
+- Build bằng toolchain + debug.keystore cũ: apksigner cert
+  SHA-256 `0c153ff07f181ca786a379ad4893adbb76066416b71533db452da0cb058b9a29`
+  — KHÔNG ĐỔI. Checksum QR ghi danh tính lại từ APK mới:
+  `DBU_8H8YHKeGo3mtSJOtu3YGZBa3FTPbRS2gywWLmik` — khớp
+  `server/provisioning.json`.
+- aapt2 dump badging: versionCode 6 / versionName "3.3"; manifest
+  giữ `foregroundServiceType=0x00000020` (mediaProjection) +
+  quyền `FOREGROUND_SERVICE_MEDIA_PROJECTION` của bản vá 3.5.
+- **verify-stage2.js 38 PASS, 0 FAIL** (gồm check checksum QR tự
+  tính độc lập từ APK v3.3 thật).
+- Phía tool TikTok Lite (nơi dùng 2 khả năng mới): fake agent có
+  chế độ giả lập v3.3 + v3.2 chạy dàn hỗn hợp — kiểm chứng exact
+  theo package (gồm ca kẹt ở launcher mà kiểm chứng bằng dấu chữ
+  bị dương tính giả bởi biểu tượng app), tham số ảnh tới đúng
+  agent và đổi đúng dung lượng khung, máy v3.2 vẫn nhận lệnh
+  không tham số. Xem verify-tool.js của tool (mục 15).
+
+**Giới hạn thành thật:** chưa có máy thật chạy v3.3 tại thời điểm
+ghi — `foregroundPackage` và ảnh theo tham số được kiểm chứng
+tĩnh (manifest/cert) + vòng kín bằng fake agent đúng giao thức;
+xác nhận dứt điểm chờ cài đè lên máy thật (máy 02) như mọi đợt.

@@ -284,9 +284,10 @@ public class AgentService extends Service {
         o.put("sdk", Build.VERSION.SDK_INT);
         o.put("androidId", androidId());
         o.put("battery", batteryLevel());
-        o.put("agentVersion", "3.2");
+        o.put("agentVersion", "3.3");
         o.put("deviceOwner", isDeviceOwner(this));
         o.put("accessibility", FarmAccessibilityService.isRunning());
+        putForegroundPackage(o);
         return o;
     }
 
@@ -298,7 +299,17 @@ public class AgentService extends Service {
         o.put("screenOn", screenOn());
         o.put("deviceOwner", isDeviceOwner(this));
         o.put("accessibility", FarmAccessibilityService.isRunning());
+        putForegroundPackage(o);
         return o;
+    }
+
+    // Agent v3.3: kem package cua app dang o foreground (chi co khi
+    // Tro nang dang chay; chua bat thi KHONG co truong nay — server
+    // cu bo qua, server moi dung de kiem chung chinh xac app nao
+    // dang mo thay vi doan qua noi dung dump_ui).
+    private void putForegroundPackage(JSONObject o) throws Exception {
+        String fg = FarmAccessibilityService.foregroundPackage();
+        if (fg != null && !fg.isEmpty()) o.put("foregroundPackage", fg);
     }
 
     private JSONObject buildStatusMsg() throws Exception {
@@ -446,7 +457,17 @@ public class AgentService extends Service {
                     r.put("error", "no_permission");
                     return r;
                 }
-                String b64 = takeScreenshot();
+                // Agent v3.3: tham so tuy chon maxWidth (px) + quality
+                // (JPEG 1-100). KHONG gui tham so = dung y hanh vi cu
+                // (rong toi da 720, quality 70) — server cu khong bi
+                // anh huong. Gia tri ngoai khoang an toan thi kep lai.
+                int shotMaxW = args.optInt("maxWidth", 720);
+                if (shotMaxW < 120) shotMaxW = 120;
+                if (shotMaxW > 1440) shotMaxW = 1440;
+                int shotQuality = args.optInt("quality", 70);
+                if (shotQuality < 1) shotQuality = 1;
+                if (shotQuality > 100) shotQuality = 100;
+                String b64 = takeScreenshot(shotMaxW, shotQuality);
                 JSONObject d = new JSONObject();
                 d.put("image", b64);
                 r.put("ok", true);
@@ -687,14 +708,14 @@ public class AgentService extends Service {
     }
 
     /** Chi goi khi dang giu captureLock. Tao moi projection neu chua co; resize neu doi kich thuoc. */
-    private void ensureCaptureLocked() throws Exception {
+    private void ensureCaptureLocked(int maxWidth) throws Exception {
         WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         Display display = wm.getDefaultDisplay();
         android.graphics.Point size = new android.graphics.Point();
         display.getRealSize(size);
         int srcW = size.x;
         int srcH = size.y;
-        double scale = srcW > 720 ? (720.0 / srcW) : 1.0;
+        double scale = srcW > maxWidth ? ((double) maxWidth / srcW) : 1.0;
         int w = Math.max(2, (int) (srcW * scale));
         int h = Math.max(2, (int) (srcH * scale));
         if ((w % 2) == 1) w -= 1;
@@ -759,9 +780,9 @@ public class AgentService extends Service {
         capH = h;
     }
 
-    private String takeScreenshot() throws Exception {
+    private String takeScreenshot(int maxWidth, int quality) throws Exception {
         synchronized (captureLock) {
-            ensureCaptureLocked();
+            ensureCaptureLocked(maxWidth);
             Bitmap bmp = null;
             long deadline = System.currentTimeMillis() + 4000;
             while (System.currentTimeMillis() < deadline && bmp == null) {
@@ -782,7 +803,7 @@ public class AgentService extends Service {
             }
             if (bmp == null) throw new Exception("capture_timeout");
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bmp.compress(Bitmap.CompressFormat.JPEG, 70, baos);
+            bmp.compress(Bitmap.CompressFormat.JPEG, quality, baos);
             bmp.recycle();
             return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
         }
