@@ -1,3 +1,187 @@
+# Farm Control — Giai đoạn 5: Hướng dẫn
+
+> **BẢN GIAI ĐOẠN 5 (2026-11-20) — 4 NÂNG CẤP MỚI cho cả
+> server lẫn agent (Farm Agent v5).** Cả 4 đều học từ cách làm
+> của Tokium nhưng xây lại theo hệ thống của mình:
+>
+> 1. **Ghép nối bằng QR** — kết nối máy mới khỏi gõ IP.
+> 2. **Claim Gmail (giữ chỗ 12 giờ)** — flow không bao giờ rút
+>    nhầm tài khoản thứ hai cho cùng một máy.
+> 3. **Tác vụ sống sót qua khởi động lại server** — server tắt
+>    mở lại, việc đang dở vẫn chạy tiếp được.
+> 4. **Đăng ký LINE (Singapore + Google)** — pipeline mới ở
+>    tab ⚙ Tác vụ.
+>
+> **Việc huynh cần làm trên MỖI điện thoại:**
+> 1. Cài file **agent.apk** (v5) trong gói này **ĐÈ LÊN** bản
+>    cũ — **IP / cổng / nhãn máy và Trợ năng được giữ nguyên**.
+>    **Đừng gỡ bản cũ ra trước.**
+> 2. Mở app Farm Agent → bấm **Cho phép chụp màn hình** →
+>    **"Bắt đầu ngay"** một lần nữa (cài đè xong phải cấp lại
+>    quyền chụp 1 lần — như mọi lần).
+> 3. Lần đầu bấm **"Quét mã ghép nối"**, Android sẽ hỏi quyền
+>    **Camera** → chọn **Cho phép** (chỉ dùng để quét QR).
+>
+> **Cách cập nhật server (như mọi lần):** (1) Dừng server cũ
+> (Ctrl+C). (2) Giải nén gói giai đoạn 5. (3) Chép **toàn bộ
+> thư mục `data/` của server cũ** đè sang `data/` của server
+> mới — bước này giờ còn quan trọng hơn: kho Gmail, trạng thái
+> LINE và cả các tác vụ đang dở đều nằm trong đó. (4) Vào thư
+> mục `server` của bản mới, chạy `node server.js`. (5) Mở tab
+> "Kho dữ liệu" **kiểm tra kho Gmail / kho heo đã hiện đúng**
+> rồi mới chạy tác vụ.
+
+## Nâng cấp 1 — Ghép nối máy mới bằng QR (khỏi gõ IP)
+
+Cách cũ (gõ IP + cổng trong app) **vẫn dùng bình thường**.
+Cách mới nhanh hơn cho máy đang cầm trên tay:
+
+1. Trên dashboard, mở mục **➕ Thêm máy** → phần **C. Ghép
+   nối bằng QR** → bấm **"Tạo mã ghép nối"**. Mã QR hiện ra,
+   **chỉ sống 300 giây và chỉ dùng cho MỘT máy**.
+2. Trên điện thoại, mở **Farm Agent** → bấm **"📷 Quét mã
+   ghép nối (QR)"** → chĩa camera vào mã QR.
+3. Xong: agent tự điền IP + cổng của MacBook và tự kết nối —
+   thẻ máy trên dashboard hiện thêm huy hiệu **📷 Ghép nối
+   QR**. Nhãn máy giữ nguyên như cũ, vẫn sửa được trong app.
+4. **Đường thứ hai:** dùng app Camera / Google Lens của máy
+   quét mã QR đó cũng được — máy sẽ tự mở đúng Farm Agent.
+5. Mã hết hạn hoặc đã dùng cho máy khác: agent báo rõ lý do
+   ngay trên điện thoại ("Mã ghép nối hết hạn — tạo mã mới
+   trên trang điều khiển"). Cứ bấm tạo mã mới rồi quét lại.
+
+## Nâng cấp 2 — Claim Gmail: giữ chỗ 12 giờ, không rút nhầm
+
+Từ giờ, khi một flow cần Gmail cho một máy (Cấp Gmail, Cấp
+máy mới, Đăng ký LINE…), server **giữ chỗ (claim)** một tài
+khoản cho máy đó trong **12 giờ**:
+
+- Trong 12 giờ đó, các lần chạy lại / thử lại cho **cùng máy
+  đó** luôn dùng lại **đúng tài khoản đang giữ** — không bao
+  giờ rút thêm tài khoản thứ hai.
+- Máy **khác** không rút được tài khoản đang bị giữ (coi như
+  kho đã hết nếu chỉ còn tài khoản bị giữ).
+- Đăng nhập Google **xong** → tài khoản chuyển thành **Đã
+  cấp** như cũ.
+- Flow **lỗi / bị dừng**, **xoá máy**, hoặc **quá 12 giờ**
+  chưa xong → chỗ giữ được nhả, tài khoản quay về Sẵn sàng.
+- Flow đang **Chờ chạm tay** (Google bắt xác minh) thì chỗ
+  giữ **vẫn còn** — xử lý xong chạy tiếp vẫn đúng tài khoản đó.
+
+Trên dashboard (tab 🗄 Kho dữ liệu), tài khoản đang bị giữ
+hiện trạng thái **"Đang giữ (claim 12 giờ)"** và cột máy ghi
+**"Đang giữ bởi Máy X · hết hạn HH:MM"** — phân biệt rõ với
+"Đã cấp". Số "Sẵn sàng" ở đầu bảng là số tài khoản **rút
+được ngay lúc này**.
+
+## Nâng cấp 3 — Server khởi động lại: việc dở vẫn chạy tiếp
+
+Từ giờ server tự ghi lại mọi tác vụ đang chạy xuống đĩa.
+Tắt server (Ctrl+C, mất điện, treo máy…) rồi mở lại:
+
+- Tác vụ đang **Chờ chạm tay** → vẫn chờ ở đúng bước đó. Mở
+  tab **⚙ Tác vụ**, ở phần tác vụ đang chạy bấm **"Đã xử
+  lý — chạy tiếp"** như bình thường.
+- Tác vụ đang **chạy dở một bước** → hiện trạng thái **"BỊ
+  GIÁN ĐOẠN (server khởi động lại)"** kèm nút **"Chạy lại
+  bước đang dở"** — bước đó sẽ chạy lại từ đầu (các bước của
+  hệ thống đều chịu được việc chạy lại).
+- Nhật ký sự kiện có dòng **"Đã khôi phục N tác vụ sau khi
+  server khởi động lại"** để biết có việc dở hay không.
+- **Vòng xem video / check heo đang chạy thì KHÔNG tự chạy
+  lại** sau khi server mở lại (tránh máy tự xem ngoài ý
+  muốn) — thẻ máy ghi rõ "bị gián đoạn", huynh bấm **Bắt
+  đầu xem** lại khi cần.
+- Phía điện thoại không đổi: máy khởi động lại thì agent tự
+  chạy lại và kết nối về như cũ, tác vụ đã khôi phục tự gắn
+  lại đúng máy khi máy online.
+
+## Nâng cấp 4 — Đăng ký LINE (Singapore + Google)
+
+Chạy ở tab **⚙ Tác vụ** → thẻ **"💚 Đăng ký LINE (Singapore
++ Google)"** → chọn máy ở tab 📱 Dàn máy rồi bấm chạy. Các
+bước tự động:
+
+1. Giữ chỗ Gmail cho máy (cơ chế claim ở trên) và **tự đăng
+   nhập Google** bằng Gmail đó — Google bắt xác minh thì
+   dừng **Chờ chạm tay** như flow Cấp Gmail.
+2. **BƯỚC CHẠM TAY (bắt buộc làm tay):** gỡ các tài khoản
+   Google **KHÁC** khỏi máy — vào *Cài đặt → Tài khoản*,
+   chọn từng tài khoản khác → **Xoá tài khoản** — chỉ giữ
+   lại Gmail vừa cấp. **Xoá tài khoản không tự động hoá
+   được** nên hệ thống dừng chờ ở bước này; làm xong bấm
+   **"Đã xử lý — chạy tiếp"**.
+3. Tự mở **LINE** (máy chưa cài LINE → báo lỗi rõ ràng
+   "app_not_installed" — cài LINE trước bằng thẻ "Tải LINE").
+4. Tự điều hướng đăng ký: bấm đăng ký mới → **Tiếp tục bằng
+   Google** → ở màn hình nhập số điện thoại, mở ô chọn quốc
+   gia và chọn **Singapore (+65)** → bấm Tiếp theo.
+5. LINE bắt **xác minh (SMS / mã xác nhận)** → dừng **Chờ
+   chạm tay**: huynh nhập mã trên máy xong rồi bấm chạy tiếp.
+   Nếu màn hình LINE khác hẳn với dự tính, flow cũng dừng
+   chờ thay vì bấm bừa.
+6. Xong → thẻ máy hiện huy hiệu **💚 LINE ✔** (lưu bền trên
+   server, khởi động lại không mất).
+
+> ⚠️ **LƯU Ý HIỆU CHUẨN (quan trọng):** các "dấu chữ" tiếng
+> Nhật để nhận diện màn hình LINE nằm ở mục `lineRegister`
+> trong file `server/data/flow-config.json` — đây là **bản
+> mặc định chưa chạy qua máy thật**. Lần đầu chạy flow này,
+> hãy chạy **1 máy trước** và theo dõi: nếu flow dừng chờ ở
+> màn hình lạ hoặc báo không nhận diện được, **chụp màn
+> hình đó gửi đệ** — đệ hiệu chuẩn lại dấu chữ từ ảnh thật,
+> đúng quy trình như đã làm với flow TikTok/Google. Đừng
+> chạy cả dàn khi chưa qua được 1 máy.
+
+## Danh sách test Giai đoạn 5 (huynh tick từng mục)
+
+- [ ] Cài đè agent v5 lên 1 máy → máy online lại, IP/nhãn cũ còn nguyên
+- [ ] Thêm máy → Tạo mã ghép nối → quét bằng Farm Agent → máy online, có huy hiệu 📷
+- [ ] Quét lại chính mã đó bằng máy thứ hai → máy thứ hai bị từ chối, agent báo đã dùng
+- [ ] Chạy Cấp Gmail cho 1 máy → trong lúc chờ, kho Gmail hiện "Đang giữ bởi Máy…" đúng máy đó
+- [ ] Tắt server giữa lúc một flow đang chờ chạm tay → mở lại → flow vẫn ở đó, bấm chạy tiếp → xong
+- [ ] Chạy Đăng ký LINE cho 1 máy test → qua được bước gỡ tài khoản (chạm tay) → LINE mở → chọn được Singapore (hoặc dừng chờ ở màn hình lạ → chụp gửi đệ hiệu chuẩn)
+
+---
+# Farm Control — Giai đoạn 4: Hướng dẫn
+
+> **BẢN GIAI ĐOẠN 4 (2026-11-19) — CHỈ THAY AGENT: Farm Agent
+> v3.3 → v4. Server KHÔNG đổi một byte nào so với bản 3.6** (đã
+> kiểm bằng diff: toàn bộ thư mục `server/` giống hệt 3.6, trừ
+> chính file `agent.apk` bên trong `server/public-apks/` được
+> thay bằng bản mới).
+>
+> **Agent v4 có gì mới:**
+> 1. **VIDEO trực tiếp H.264 theo yêu cầu:** agent có thêm
+> pipeline MediaProjection → bộ mã hoá H.264 phần cứng, phát
+> qua một kết nối riêng về server. Tính năng này phục vụ tool
+> **"Trung tâm điều khiển TikTok Lite"** (máy đang điều khiển
+> xem video thật thay vì ảnh chụp). Agent **chỉ mã hoá khi
+> server ra lệnh** (có người đang xem) — không ai xem thì
+> không chạy, không tốn pin/nóng máy. Server Farm Control
+> hiện tại chưa dùng khả năng này; nâng agent trước để **cả
+> hai hệ thống dùng chung một bản agent**, khỏi lẫn phiên bản
+> giữa các máy.
+> 2. Mọi thứ còn lại giữ nguyên v3.3 (báo foregroundPackage,
+> chụp màn hình theo tham số, bản vá Android 14…). **Cùng chữ
+> ký như mọi bản trước** nên mã QR cấp máy Device Owner vẫn
+> khớp.
+>
+> **Việc huynh cần làm trên MỖI điện thoại:**
+> 1. Cài file **agent.apk** trong gói này **ĐÈ LÊN** bản cũ —
+> **IP / cổng / nhãn máy và Trợ năng được giữ nguyên**, không
+> phải nhập lại. **Đừng gỡ bản cũ ra trước.**
+> 2. Mở app Farm Agent → bấm **CHO PHÉP CHỤP MÀN HÌNH** →
+> **"Bắt đầu ngay"** một lần nữa (cài đè xong phải cấp lại
+> quyền chụp 1 lần).
+>
+> **Cách cập nhật server (như mọi lần):** (1) Dừng server cũ
+> (Ctrl+C). (2) Giải nén gói giai đoạn 4. (3) Chép **toàn bộ
+> thư mục `data/` của server cũ** đè sang `data/` của server
+> mới. (4) Vào thư mục `server` của bản mới và chạy
+> `node server.js`. (5) Mở tab "Kho dữ liệu" **kiểm tra kho
+> Gmail / kho heo đã hiện đúng chưa** rồi mới chạy tác vụ.
+
 # Farm Control — Giai đoạn 3.5: Hướng dẫn
 
 > **BẢN 3.5 (2026-11-17) — BẢN VÁ AGENT v3.2: sửa lỗi KHÔNG

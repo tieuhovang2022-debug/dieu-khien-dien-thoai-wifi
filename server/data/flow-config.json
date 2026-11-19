@@ -1,1 +1,125 @@
-{"checkin":{"buttonMarkers":["チェックインする","チェックイン"],"entryMarkers":["チェックイン","ボーナス","ポイント"],"successMarkers":["チェックイン完了","チェックイン成功","ポイントを獲得しました","付与されました"]},"checkinSuccessMarkers":["チェックイン完了","チェックイン成功","ポイントを獲得しました","付与されました"],"onboardingMarkers":["同意する","許可する","スキップ","次へ","登録","ログイン"],"signin":{"agreeButton":["同意します","I agree"],"emailScreen":["メールアドレスまたは電話番号","メールアドレス","Email or phone"],"nextButton":["次へ","Next"],"passwordScreen":["パスワード","Password"],"verifyMarkers":["本人確認","確認コード","セキュリティコード","電話番号を入力","ロボットではありません","2段階認証"]},"tiktokLogin":{"loginButton":["ログイン","Log in","次へ","Next"],"loginEntry":["ログイン","ログインする","Log in"],"passwordScreen":["パスワード","Password"],"usernameScreen":["ユーザー名","メールアドレス","電話番号","Username","Email or phone"],"verifyMarkers":["本人確認","確認コード","認証コード","セキュリティコード","電話番号を入力","ロボットではありません"]}}
+{
+  "checkin": {
+    "buttonMarkers": [
+      "チェックインする",
+      "チェックイン"
+    ],
+    "entryMarkers": [
+      "チェックイン",
+      "ボーナス",
+      "ポイント"
+    ],
+    "successMarkers": [
+      "チェックイン完了",
+      "チェックイン成功",
+      "ポイントを獲得しました",
+      "付与されました"
+    ]
+  },
+  "checkinSuccessMarkers": [
+    "チェックイン完了",
+    "チェックイン成功",
+    "ポイントを獲得しました",
+    "付与されました"
+  ],
+  "onboardingMarkers": [
+    "同意する",
+    "許可する",
+    "スキップ",
+    "次へ",
+    "登録",
+    "ログイン"
+  ],
+  "signin": {
+    "agreeButton": [
+      "同意します",
+      "I agree"
+    ],
+    "emailScreen": [
+      "メールアドレスまたは電話番号",
+      "メールアドレス",
+      "Email or phone"
+    ],
+    "nextButton": [
+      "次へ",
+      "Next"
+    ],
+    "passwordScreen": [
+      "パスワード",
+      "Password"
+    ],
+    "verifyMarkers": [
+      "本人確認",
+      "確認コード",
+      "セキュリティコード",
+      "電話番号を入力",
+      "ロボットではありません",
+      "2段階認証"
+    ]
+  },
+  "tiktokLogin": {
+    "loginButton": [
+      "ログイン",
+      "Log in",
+      "次へ",
+      "Next"
+    ],
+    "loginEntry": [
+      "ログイン",
+      "ログインする",
+      "Log in"
+    ],
+    "passwordScreen": [
+      "パスワード",
+      "Password"
+    ],
+    "usernameScreen": [
+      "ユーザー名",
+      "メールアドレス",
+      "電話番号",
+      "Username",
+      "Email or phone"
+    ],
+    "verifyMarkers": [
+      "本人確認",
+      "確認コード",
+      "認証コード",
+      "セキュリティコード",
+      "電話番号を入力",
+      "ロボットではありません"
+    ]
+  },
+  "lineRegister": {
+    "startMarkers": [
+      "新規登録",
+      "登録",
+      "はじめる"
+    ],
+    "googleContinue": [
+      "Googleで続ける",
+      "Googleでログイン"
+    ],
+    "countryMarkers": [
+      "シンガポール",
+      "Singapore",
+      "+65"
+    ],
+    "countrySearchText": "シンガポール",
+    "agreeMarkers": [
+      "同意する",
+      "次へ"
+    ],
+    "verifyMarkers": [
+      "本人確認",
+      "確認コード",
+      "認証コード",
+      "セキュリティコード",
+      "ロボットではありません"
+    ],
+    "successMarkers": [
+      "ようこそ",
+      "LINEへようこそ",
+      "ホーム"
+    ]
+  }
+}

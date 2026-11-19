@@ -91,10 +91,25 @@ public class MainActivity extends Activity {
             }
             String lbl = labelEt.getText().toString().trim();
             Prefs.save(this, host, port, lbl, true);
+            // Ket noi tay = bo ma ghep noi cu (neu co) + bo co chan
+            // ghep noi: may ket noi nhu mot may da cau hinh binh thuong.
+            Prefs.clearPairCode(this);
+            AgentService.pairBlocked = false;
             startAgent();
+            AgentService.requestReconnect();
             Toast.makeText(this, "Đã lưu. Đang kết nối...", Toast.LENGTH_SHORT).show();
         });
         root.addView(connectBtn);
+
+        Button scanBtn = new Button(this);
+        scanBtn.setText("📷 Quét mã ghép nối (QR)");
+        scanBtn.setOnClickListener(v -> startActivity(new Intent(this, PairScanActivity.class)));
+        root.addView(scanBtn);
+
+        TextView scanDesc = new TextView(this);
+        scanDesc.setText("Cách nhanh nhất: mở mục “Thêm máy” trên trang điều khiển, bấm “Tạo mã ghép nối”, rồi bấm nút quét ở trên và chĩa camera vào mã QR — agent tự điền IP + cổng, khỏi gõ tay. Mã chỉ sống 300 giây và dùng cho một máy.");
+        scanDesc.setTextSize(15);
+        root.addView(scanDesc);
 
         Button stopBtn = new Button(this);
         stopBtn.setText("Ngắt kết nối");
@@ -152,9 +167,49 @@ public class MainActivity extends Activity {
         sv.addView(root);
         setContentView(sv);
 
+        handlePairIntent(getIntent());
+
         if (Prefs.enabled(this)) {
             startAgent();
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handlePairIntent(intent);
+    }
+
+    /**
+     * Giai doan 5: mo bang duong dan farmpair://pair?h=<ip>&p=<cong>&c=<ma>
+     * (app camera / Lens quet ma QR tren trang dieu khien) — luu IP +
+     * cong + ma ghep noi, giu nguyen nhan may hien tai, roi ep agent
+     * ket noi lai ngay de hello mang theo ma.
+     */
+    private void handlePairIntent(Intent intent) {
+        if (intent == null) return;
+        Uri data = intent.getData();
+        if (data == null || !"farmpair".equals(data.getScheme())) return;
+        String host = data.getQueryParameter("h");
+        String code = data.getQueryParameter("c");
+        int port = 8787;
+        try {
+            port = Integer.parseInt(data.getQueryParameter("p"));
+        } catch (Exception ignored) {
+        }
+        if (host == null || host.trim().isEmpty() || code == null || code.trim().isEmpty()) {
+            Toast.makeText(this, "Mã ghép nối thiếu thông tin — tạo mã mới trên trang điều khiển", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String lbl = labelEt != null ? labelEt.getText().toString().trim() : Prefs.label(this);
+        Prefs.save(this, host.trim(), port, lbl, true);
+        Prefs.setPairCode(this, code.trim());
+        if (hostEt != null) hostEt.setText(host.trim());
+        if (portEt != null) portEt.setText(String.valueOf(port));
+        startAgent();
+        AgentService.requestReconnect();
+        Toast.makeText(this, "Đã nhận mã ghép nối — đang kết nối về " + host.trim() + ":" + port + "...", Toast.LENGTH_LONG).show();
     }
 
     private TextView label(String s) {

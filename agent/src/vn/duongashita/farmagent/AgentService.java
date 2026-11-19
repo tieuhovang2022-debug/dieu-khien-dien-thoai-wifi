@@ -60,6 +60,34 @@ public class AgentService extends Service {
     private static final String CHANNEL_ID = "farm_agent_channel";
     private static final int NOTIF_ID = 1001;
 
+    // Giai doan 5 — ghep noi QR: pairBlocked=true khi server tu choi
+    // ma ghep noi (het han / da dung / khong hop le). Khi bi chan,
+    // connectLoop KHONG tu ket noi lai nua — chi khi nguoi dung quet
+    // ma moi hoac bam "Luu & Ket noi" (hai noi do deu xoa co nay).
+    public static volatile boolean pairBlocked = false;
+    // Dat true de ep vong ket noi dong socket hien tai va ket noi
+    // lai ngay (doc lai IP/cong/ma ghep noi vua luu trong Prefs).
+    public static volatile boolean forceReconnect = false;
+    private static volatile AgentService instance = null;
+
+    /** MainActivity / PairScanActivity goi sau khi luu thong tin ghep noi moi. */
+    public static void requestReconnect() {
+        pairBlocked = false;
+        forceReconnect = true;
+        AgentService s = instance;
+        if (s != null) s.closeSocket();
+    }
+
+    static String pairRejectMessage(String reason) {
+        if ("expired".equals(reason)) {
+            return "Mã ghép nối hết hạn — tạo mã mới trên trang điều khiển rồi quét lại";
+        }
+        if ("used".equals(reason)) {
+            return "Mã ghép nối đã được dùng cho máy khác — tạo mã mới trên trang điều khiển rồi quét lại";
+        }
+        return "Mã ghép nối không hợp lệ — tạo mã mới trên trang điều khiển rồi quét lại";
+    }
+
     private volatile boolean running = false;
     private Thread connectThread;
     private Socket socket;
@@ -76,6 +104,7 @@ public class AgentService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         createChannel();
         startForegroundTyped("Đang khởi động...");
     }
@@ -110,6 +139,7 @@ public class AgentService extends Service {
 
     @Override
     public void onDestroy() {
+        if (instance == this) instance = null;
         running = false;
         stopVideoInternal();
         closeSocket();
@@ -126,6 +156,13 @@ public class AgentService extends Service {
     private void connectLoop() {
         long backoff = 5000;
         while (running) {
+            if (pairBlocked) {
+                // Ma ghep noi bi server tu choi: dung yen, khong ket
+                // noi lai bang ma cu (status da ghi ro ly do). Chi
+                // quet ma moi / Luu & Ket noi moi xoa duoc co nay.
+                sleep(3000);
+                continue;
+            }
             String host = Prefs.host(this);
             int port = Prefs.port(this);
             if (host == null || host.trim().isEmpty()) {
@@ -167,6 +204,13 @@ public class AgentService extends Service {
                 closeSocket();
             }
             if (!running) break;
+            if (forceReconnect) {
+                // Vua quet ma ghep noi moi: ket noi lai gan nhu ngay.
+                forceReconnect = false;
+                backoff = 5000;
+                sleep(300);
+                continue;
+            }
             sleep(backoff);
             backoff = Math.min(backoff * 2, 60000);
         }
@@ -293,12 +337,18 @@ public class AgentService extends Service {
         o.put("sdk", Build.VERSION.SDK_INT);
         o.put("androidId", androidId());
         o.put("battery", batteryLevel());
-        o.put("agentVersion", "4.0");
+        o.put("agentVersion", "5.0");
         // Agent v4: co pipeline video H.264 theo yeu cau (lenh
         // video_start/video_stop + kenh TCP rieng) — server cu bo
         // qua truong nay, server moi dung de bat video cho may
         // dang duoc dieu khien.
         o.put("video", true);
+        // Giai doan 5: ma ghep noi QR vua quet (neu co) — server kiem
+        // tra mot lan roi tra pair_result / pair_rejected. Khong co
+        // ma thi KHONG gui truong nay: may da cau hinh tu truoc ket
+        // noi nhu cu, server cu cung bo qua truong la.
+        String pairCode = Prefs.pairCode(this);
+        if (pairCode != null && !pairCode.isEmpty()) o.put("pairCode", pairCode);
         o.put("deviceOwner", isDeviceOwner(this));
         o.put("accessibility", FarmAccessibilityService.isRunning());
         putForegroundPackage(o);
@@ -335,6 +385,29 @@ public class AgentService extends Service {
     // ---------------- Xu ly lenh ----------------
 
     private void handleLine(String line) {
+        // Giai doan 5: hai thong bao ghep noi KHONG phai lenh — xu ly
+        // rieng, khong tra "result" ve server.
+        try {
+            JSONObject probe = new JSONObject(line);
+            String type = probe.optString("type", "");
+            if ("pair_result".equals(type)) {
+                Prefs.clearPairCode(this);
+                pairBlocked = false;
+                setStatus("Ghép nối bằng QR thành công ✔ — đã kết nối " + currentHostPort);
+                return;
+            }
+            if ("pair_rejected".equals(type)) {
+                String reason = probe.optString("reason", "unknown");
+                Prefs.clearPairCode(this);
+                pairBlocked = true;
+                setStatus(pairRejectMessage(reason));
+                // Server cung se dong socket; dong chu dong o day de
+                // vong doc thoat ngay va connectLoop thay pairBlocked.
+                closeSocket();
+                return;
+            }
+        } catch (Exception ignored) {
+        }
         String id = "";
         try {
             JSONObject msg = new JSONObject(line);

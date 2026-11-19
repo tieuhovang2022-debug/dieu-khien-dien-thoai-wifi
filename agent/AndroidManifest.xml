@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="vn.duongashita.farmagent"
-    android:versionCode="7"
-    android:versionName="4.0">
+    android:versionCode="8"
+    android:versionName="5.0">
 
     <uses-sdk
         android:minSdkVersion="28"
         android:targetSdkVersion="29" />
+
+    <!-- Giai doan 5: camera chi de quet ma QR ghep noi trong app;
+         may khong co camera van cai duoc (required=false) va van
+         ghep noi duoc qua duong dan farmpair:// tu app camera/Lens. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -25,12 +32,28 @@
 
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Giai doan 5: duong dan ghep noi farmpair://pair?h=..&p=..&c=..
+                 — app camera / Google Lens quet ma QR tren trang dieu
+                 khien se mo dung vao day (duong ghep noi thu hai,
+                 ngoai trinh quet camera ngay trong app). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="farmpair" android:host="pair" />
+            </intent-filter>
         </activity>
+
+        <activity
+            android:name=".PairScanActivity"
+            android:label="Quét mã ghép nối"
+            android:exported="false" />
 
         <service
             android:name=".AgentService"

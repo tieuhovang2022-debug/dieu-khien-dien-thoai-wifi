@@ -1050,3 +1050,93 @@ ghi — chất lượng mã hoá/nhiệt độ trên máy thật và độ mư�
 mã trên trình duyệt thật chỉ xác nhận được khi cài đè lên máy
 thật; phía này kiểm chứng tĩnh (manifest/cert) + vòng kín bằng
 fake agent stream H.264 thật đúng giao thức.
+
+---
+
+# VERIFY — Farm Control Giai đoạn 5 (kiểm chứng nội bộ, 2026-11-20)
+
+4 nâng cấp học từ Tokium (phân tích APK ở ~/workspace/tokium-apk-analysis.md):
+ghép nối QR, claim Gmail ticket + cache 12 giờ, tác vụ sống sót qua
+khởi động lại server, pipeline đăng ký LINE (Singapore + Google).
+Script: **verify-stage5.js** (server tạm TCP 26787 / HTTP 26080,
+nhiều lần SIGKILL + khởi động lại server trong cùng một script).
+
+## APK agent v5 — BUILD THÀNH CÔNG
+- versionCode 8 / versionName "5.0", package vn.duongashita.farmagent (không đổi).
+- apksigner SHA-256 = `0c153ff07f181ca786a379ad4893adbb76066416b71533db452da0cb058b9a29`
+  — khớp mọi bản trước → checksum QR ghi danh Device Owner trong
+  server/provisioning.json KHÔNG đổi (`DBU_8H8YHKeGo3mtSJOtu3YGZBa3FTPbRS2gywWLmik`,
+  đã tự tính lại từ chứng chỉ của APK mới).
+- aapt2: có quyền CAMERA + uses-feature camera required=false +
+  activity .PairScanActivity + intent-filter VIEW farmpair://pair
+  trên MainActivity (launchMode singleTop).
+- **ZXing core 3.5.3 ĐÃ vendor được:** agent/libs/core-3.5.3.jar
+  (607.650 byte, tải từ repo1.maven.org/maven2/com/google/zxing/core/3.5.3/,
+  sha256 `8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82`).
+  build.sh đưa jar vào classpath javac + đầu vào d8; APK chứa
+  classes.dex duy nhất (594.180 byte — đã kiểm có lớp com.google.zxing
+  + PairScanActivity + chuỗi "farmpair" trong dex). APK 303.655 byte.
+  → APK xuất xưởng có CẢ HAI đường ghép nối: quét camera trong app
+  (PairScanActivity: Camera1 + PlanarYUVLuminanceSource/HybridBinarizer,
+  chỉ nhận QR_CODE) và deep-link farmpair:// cho app Camera/Lens.
+- Agent: hello mang pairCode chỉ khi có mã đã lưu; pair_result →
+  xoá mã + báo thành công; pair_rejected → xoá mã, đặt pairBlocked
+  (connectLoop không tự kết nối lại; quét mã mới / Lưu & Kết nối
+  mới gỡ), hiện thông báo tiếng Việt theo lý do expired/used/unknown.
+  Không có pairCode → hello như cũ (tương thích ngược cả hai chiều).
+
+## verify-stage5.js — 95 PASS, 0 FAIL (chạy 2 lần liên tiếp, cùng kết quả)
+1. **Ghép nối QR (13 checks):** POST /api/pairing/new → code + ttlSeconds=300
+   + payload đúng dạng `farmpair://pair?h=<ip>&p=8787&c=<code>` + SVG;
+   GET /api/pairing trả phiên đang sống; fake gửi pairCode → online +
+   pairedViaQr=true, phiên bị đánh dấu usedBy đúng máy; máy khác dùng
+   lại mã → bị từ chối 'used', không online, fake tự ngắt; mã lạ →
+   'unknown'; mã hết hạn (PAIRING_TTL_MS=1500 qua env) → 'expired';
+   máy không gửi mã vẫn kết nối như cũ.
+2. **Claim Gmail (20+ checks):** flow Cấp Gmail dừng Chờ chạm tay
+   (FAKE_VERIFY) thì claim vẫn sống (ticket qua GET /api/gmail/claims,
+   account.claim hiện đúng máy, "ready rút được" = 0); máy thứ hai
+   rút → pool_empty; gọi lại cho chính máy đang giữ (signin-assist)
+   → outcome 'verify' và **đúng ticket cũ**, không rút thêm; xử lý
+   tay + resume → claim chuyển assigned; back-date claimExpiresAt
+   trong gmail-pool.json + khởi động lại → sweep ở boot nhả claim,
+   máy khác rút được; flow lỗi ngay (máy offline) → claim được nhả;
+   xoá máy → claim được nhả. Mật khẩu không lộ trong bất kỳ response nào.
+3. **Sống sót qua khởi động lại (20+ checks):** pipeline-runs.json
+   trên đĩa có run + waiting_manual; SIGKILL lúc đang Chờ chạm tay →
+   run khôi phục waiting_manual + restored=true, /api/info
+   restoredRuns ≥ 1, resume (đường restored) → done, claim chuyển
+   assigned, không trùng run; stop run khôi phục → stopped; SIGKILL
+   giữa bước → run 'interrupted', resume chạy lại từ bước đó → done
+   (bản vá kèm theo: bước gmail_signin khi chạy lại tìm tài khoản
+   qua claim đang giữ — findClaimForDevice — vì _gmailAccount chỉ
+   có trong bộ nhớ); vòng xem đang watching → khôi phục
+   'interrupted' và KHÔNG tự chạy lại.
+4. **Đăng ký LINE (25+ checks):** pipeline dang-ky-line có trong
+   /api/pipelines; thứ tự bước đúng (assign_gmail → gmail_signin →
+   manual gỡ tài khoản → open_app LINE → line_register); claim
+   chuyển assigned trước bước chạm tay; openAppLog của fake chỉ
+   có jp.naver.line.android; xong → line-state.json (doneAt +
+   email) + device.line.done; biến thể FAKE_LINE_VERIFY=1 → dừng
+   Chờ chạm tay ở bước line_register, nhập mã + chạm 次へ +
+   resume → xong; FAKE_LINE_NOT_INSTALLED=1 → bước mở LINE lỗi
+   app_not_installed rõ ràng, assigned giữ nguyên (chỉ claim còn
+   sống mới bị nhả khi flow lỗi).
+
+## Hồi quy — toàn bộ suite cũ xanh sau nâng cấp
+- verify-stage2: 38 · stage3: 41 · stage31: 29 · stage32: 54 ·
+  stage321: 18 · stage322: 16 · stage323: 25 · stage324: 18 ·
+  stage33: 37 · stage34: 34 — tất cả PASS, 0 FAIL.
+- /api/info giữ nguyên agentVersionExpected '3.0' (thêm trường
+  restoredRuns/restoredWatches riêng); GET /api/gmail 'ready' giờ
+  nghĩa là "rút được ngay" (ready và không bị giữ claim) — khi
+  không có claim nào thì bằng đúng số cũ.
+
+**Giới hạn thành thật:** (1) dấu chữ `lineRegister` trong
+flow-config.json là mặc định tiếng Nhật **chưa hiệu chuẩn qua
+màn hình LINE thật** — lần chạy máy thật đầu tiên phải chạy 1
+máy và hiệu chuẩn từ ảnh chụp như các flow TikTok/Google;
+(2) ghép nối QR chưa được quét thử bằng máy thật (đường camera
++ ZXing mới kiểm tĩnh qua dex/manifest; vòng kín phía server
+đã kiểm bằng fake agent); (3) gỡ tài khoản Google khác là bước
+chạm tay bắt buộc — không tự động hoá được bằng Trợ năng.

@@ -165,6 +165,23 @@ let signinState = 'none';
 let ttLoginState = 'none';
 // Da bam nut チェックインする trong phien nay chua (flow diem-danh).
 let ttCheckedIn = false;
+// May trang thai dang ky LINE (Giai doan 5):
+//   none -> (open_app jp.naver.line.android) -> entry -> (cham 新規登録)
+//   -> auth -> (cham Googleで続ける) -> country (mac dinh 日本 +81)
+//   -> (cham o quoc gia) -> countrylist -> (cham dong シンガポール)
+//   -> country (da chon Singapore +65) -> (cham 次へ) -> home
+//   (FAKE_LINE_VERIFY=1: o buoc cuoi vao 'verify' — nhap ma vao o
+//   xac nhan roi cham 次へ moi ve home).
+// FAKE_LINE_NOT_INSTALLED=1 -> open_app LINE tra app_not_installed.
+let lineState = 'none';
+let lineCountry = 'JP';
+let lineCodeText = '';
+const FAKE_LINE_VERIFY = process.env.FAKE_LINE_VERIFY === '1';
+const FAKE_LINE_NOT_INSTALLED = process.env.FAKE_LINE_NOT_INSTALLED === '1';
+const LINE_PKG = 'jp.naver.line.android';
+// Nhat ky cac goi app da mo bang open_app (kiem chung thu tu buoc:
+// Gmail phai duoc cap/dang nhap TRUOC khi LINE mo).
+const openAppLog = [];
 // Nhat ky lenh da nhan (debug cho script kiem chung) — xem ghi chu dau file.
 const cmdLog = [];
 function logCmd(entry) {
@@ -177,7 +194,7 @@ const TINY_JPEG_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQD
 let battery = 87;
 const sock = net.connect(PORT, HOST, () => {
   console.log('[fake-agent] da ket noi ' + HOST + ':' + PORT);
-  send({
+  const helloMsg = {
     type: 'hello',
     label: 'Máy test ảo',
     model: 'Xperia XZ2 (fake)',
@@ -191,7 +208,11 @@ const sock = net.connect(PORT, HOST, () => {
     accessibility: HAS_ACCESSIBILITY,
     width: SCREEN_W || undefined,
     height: SCREEN_H || undefined
-  });
+  };
+  // Giai doan 5: ghep noi QR — dat FAKE_PAIR_CODE de hello mang theo
+  // ma ghep noi (server se tra pair_result / pair_rejected).
+  if (process.env.FAKE_PAIR_CODE) helloMsg.pairCode = process.env.FAKE_PAIR_CODE;
+  send(helloMsg);
   setInterval(() => {
     battery = Math.max(80, battery - 1);
     send(statusMsg());
@@ -209,6 +230,16 @@ sock.on('data', (chunk) => {
     if (!line) continue;
     let msg;
     try { msg = JSON.parse(line); } catch (e) { continue; }
+    // Giai doan 5: ket qua ghep noi QR — ghi ra STDOUT de script kiem
+    // chung doc duoc (server tu dong ket noi neu ma bi tu choi).
+    if (msg && msg.type === 'pair_result') {
+      console.log('[fake-agent] PAIR_RESULT ok=' + (msg.ok ? 'true' : 'false'));
+      continue;
+    }
+    if (msg && msg.type === 'pair_rejected') {
+      console.log('[fake-agent] PAIR_REJECTED reason=' + (msg.reason || ''));
+      continue;
+    }
     if (msg && msg.cmd) handleCmd(msg);
   }
 });
@@ -289,6 +320,58 @@ function ttLoginNodes() {
     { text: '確認コードを入力してください', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 560], clickable: false },
     { text: '', desc: '確認コード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
     { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
+  ];
+}
+
+// Cac man hinh dang ky LINE gia lap (Giai doan 5) — dung khi
+// lineState khac 'none'. Moi man hinh chua dung cac dau chu trong
+// muc "lineRegister" cua flow-config.json.
+function lineNodes() {
+  if (lineState === 'entry') {
+    return [
+      { text: 'LINE', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: '新規登録', desc: '', className: 'android.widget.Button', bounds: [80, 1900, 1000, 2020], clickable: true },
+      { text: 'ログイン', desc: '', className: 'android.widget.Button', bounds: [80, 2080, 1000, 2200], clickable: true }
+    ];
+  }
+  if (lineState === 'auth') {
+    return [
+      { text: 'LINE', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: 'Googleで続ける', desc: '', className: 'android.widget.Button', bounds: [80, 900, 1000, 1020], clickable: true },
+      { text: '電話番号でログイン', desc: '', className: 'android.widget.TextView', bounds: [80, 1100, 1000, 1180], clickable: true }
+    ];
+  }
+  if (lineState === 'countrylist') {
+    return [
+      { text: '国・地域を選択', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: '', desc: '国を検索', className: 'android.widget.EditText', bounds: [80, 320, 1000, 440], clickable: true },
+      { text: 'シンガポール +65', desc: '', className: 'android.widget.TextView', bounds: [80, 500, 1000, 600], clickable: true },
+      { text: '日本 +81', desc: '', className: 'android.widget.TextView', bounds: [80, 620, 1000, 720], clickable: true },
+      { text: 'アメリカ +1', desc: '', className: 'android.widget.TextView', bounds: [80, 740, 1000, 840], clickable: true }
+    ];
+  }
+  if (lineState === 'country') {
+    return [
+      { text: 'LINE', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: '電話番号を入力してください', desc: '', className: 'android.widget.TextView', bounds: [80, 400, 1000, 480], clickable: false },
+      { text: lineCountry === 'SG' ? 'シンガポール +65' : '日本 +81', desc: '国', className: 'android.widget.TextView', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: '', desc: '電話番号', className: 'android.widget.EditText', bounds: [80, 740, 1000, 860], clickable: true },
+      { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
+    ];
+  }
+  if (lineState === 'verify') {
+    return [
+      { text: 'LINE', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+      { text: '確認コードを入力してください', desc: '', className: 'android.widget.TextView', bounds: [80, 400, 1000, 480], clickable: false },
+      { text: lineCodeText ? '••••••' : '', desc: '確認コード', className: 'android.widget.EditText', bounds: [80, 580, 1000, 700], clickable: true },
+      { text: '次へ', desc: '', className: 'android.widget.Button', bounds: [760, 2100, 1000, 2220], clickable: true }
+    ];
+  }
+  // home: dang ky xong — man hinh chinh LINE
+  return [
+    { text: 'LINEへようこそ', desc: '', className: 'android.widget.TextView', bounds: [80, 200, 1000, 280], clickable: false },
+    { text: 'ホーム', desc: '', className: 'android.widget.TextView', bounds: [80, 400, 1000, 480], clickable: true },
+    { text: 'トーク', desc: '', className: 'android.widget.TextView', bounds: [80, 520, 1000, 600], clickable: true }
   ];
 }
 
@@ -373,6 +456,7 @@ function applyKeyboardShift(nodes) {
 
 /** Node cua man hinh hien tai: dang o man hinh dang nhap thi tra node dang nhap. */
 function currentNodes() {
+  if (lineState !== 'none') return lineNodes();
   if (signinState !== 'none') return visibleSigninNodes();
   if (ttLoginState !== 'none') return ttLoginNodes();
   return fakeNodes();
@@ -413,6 +497,25 @@ function applyTapTransitions(hit) {
   }
   // Nut diem danh tren feed: bam vao la man hinh bao check-in xong
   if (hitText.indexOf('チェックインする') >= 0) ttCheckedIn = true;
+  // May trang thai dang ky LINE (Giai doan 5)
+  if (lineState === 'entry' && hitText.indexOf('新規登録') >= 0) {
+    lineState = 'auth';
+  } else if (lineState === 'auth' && hitText.indexOf('Googleで続ける') >= 0) {
+    lineState = 'country';
+  } else if (lineState === 'countrylist') {
+    if (hitText.indexOf('シンガポール') >= 0) { lineCountry = 'SG'; lineState = 'country'; }
+    else if (hitText.indexOf('日本') >= 0) { lineCountry = 'JP'; lineState = 'country'; }
+  } else if (lineState === 'country') {
+    if (hitText.indexOf('次へ') >= 0) {
+      // Chi khi quoc gia da la Singapore thi 次へ moi di tiep
+      if (lineCountry === 'SG') lineState = FAKE_LINE_VERIFY ? 'verify' : 'home';
+    } else if (hitText.indexOf('+81') >= 0 || hitText.indexOf('日本') >= 0 ||
+               hitText.indexOf('シンガポール') >= 0 || hitText.indexOf('+65') >= 0) {
+      lineState = 'countrylist';
+    }
+  } else if (lineState === 'verify' && hitText.indexOf('次へ') >= 0) {
+    if (lineCodeText) lineState = 'home';
+  }
 }
 
 function handleCmd(msg) {
@@ -432,18 +535,31 @@ function handleCmd(msg) {
         signinState: signinState,
         ttLoginState: ttLoginState,
         ttCheckedIn: ttCheckedIn,
+        lineState: lineState,
+        openAppLog: openAppLog.slice(),
         cmdLog: cmdLog.slice()
       });
       break;
-    case 'open_app':
+    case 'open_app': {
       // Mo app khac = roi khoi man hinh dang nhap Google (neu dang o do)
-      // va ve feed TikTok (ttLoginState ve none); cac o nhap lam moi lai
+      // va ve feed TikTok (ttLoginState ve none); cac o nhap lam moi lai.
+      // Mo LINE (Giai doan 5): vao man hinh entry cua dang ky LINE,
+      // tru khi FAKE_LINE_NOT_INSTALLED=1 thi tra app_not_installed.
+      const pkg = args['package'] || '';
+      openAppLog.push(pkg);
+      if (pkg === LINE_PKG && FAKE_LINE_NOT_INSTALLED) {
+        result(msg.id, false, 'app_not_installed', null);
+        break;
+      }
       signinState = 'none';
       ttLoginState = 'none';
       keyboardOpen = false;
       emailFieldText = ''; passwordFieldText = ''; ttUserFieldText = ''; ttPassFieldText = '';
-      result(msg.id, true, null, { opened: args['package'] || '' });
+      lineState = (pkg === LINE_PKG) ? 'entry' : 'none';
+      if (pkg === LINE_PKG) { lineCountry = 'JP'; lineCodeText = ''; }
+      result(msg.id, true, null, { opened: pkg });
       break;
+    }
     case 'open_google_signin':
       // Mo man hinh dang nhap Google — khong can Tro nang (giong agent that)
       signinState = 'email';
@@ -517,6 +633,8 @@ function handleCmd(msg) {
       else if (signinState === 'password') { passwordFieldText = args.text || ''; logCmd('input_text(password):********'); }
       else if (ttLoginState === 'username') { ttUserFieldText = args.text || ''; logCmd('input_text(ttuser):' + (args.text || '')); }
       else if (ttLoginState === 'password') { ttPassFieldText = args.text || ''; logCmd('input_text(password):********'); }
+      else if (lineState === 'verify') { lineCodeText = args.text || ''; logCmd('input_text(linecode):********'); }
+      else if (lineState === 'countrylist') { logCmd('input_text(linesearch):' + (args.text || '')); }
       else logCmd('input_text:' + (args.text || ''));
       // Nhap thanh cong = ban phim IME dang mo (mo phong 3.2.4)
       keyboardOpen = true;
@@ -546,6 +664,13 @@ function handleCmd(msg) {
       if (ttLoginState !== 'none') {
         const tn = applyKeyboardShift(ttLoginNodes());
         result(msg.id, true, null, { nodes: tn, count: tn.length });
+        break;
+      }
+      // Dang o man hinh dang ky LINE (Giai doan 5): tra node LINE,
+      // cung KHONG dem vao bo dem check-in.
+      if (lineState !== 'none') {
+        const ln = applyKeyboardShift(lineNodes());
+        result(msg.id, true, null, { nodes: ln, count: ln.length });
         break;
       }
       dumpCount++;

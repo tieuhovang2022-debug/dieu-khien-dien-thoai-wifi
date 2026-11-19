@@ -1,6 +1,44 @@
-// Farm Control - Server Giai đoạn 3.3
+// Farm Control - Server Giai đoạn 5
 // TCP 8787: agent ket noi (JSON theo dong). HTTP 8080: dashboard + API.
-// Chi dung module co san cua Node (net/http/fs/path/os/crypto). Khong can npm install.
+// Chi dung module co san cua Node (net/http/fs/path/os/crypto) + module
+// qrcode.js tu viet trong cung thu muc (sinh ma QR SVG offline).
+//
+// Giai doan 5 them (4 nang cap hoc tu Tokium, agent len v5):
+// - GHEP NOI BANG QR (kieu Tokium): dashboard tao ma ghep noi song 300
+//   giay (POST /api/pairing/new, GET /api/pairing tra payload + anh SVG);
+//   agent v5 quet ma ngay trong app (camera + ZXing) hoac mo lien ket
+//   farmpair:// thi tu dien IP/cong + gui pairCode trong hello. Server
+//   kiem tra ma: dung + chua dung + chua het han -> chap nhan (gui
+//   {"type":"pair_result","ok":true}); sai thi gui "pair_rejected" kem
+//   ly do expired/used/unknown roi dong ket noi. May da cau hinh san
+//   (khong gui pairCode) van ket noi nhu cu — tuong thich nguoc.
+// - GMAIL CLAIM TICKET + CACHE 12 GIO: buoc cap Gmail trong pipeline
+//   khong "cap dut" ngay ma GIU (claim) mot tai khoan bang ticket
+//   ngau nhien trong 12 gio: may do chay lai trong 12 gio thi dung
+//   lai DUNG tai khoan + ticket do (khong ton tai khoan moi); may
+//   khac khong rut duoc tai khoan dang bi giu. Dang nhap Google xong
+//   -> claim chuyen thanh "Da cap" (assigned). Flow loi / dung /
+//   xoa may / danh dau die / het han -> claim duoc nha ve 'ready'.
+//   Cho cham tay (park) thi claim VAN GIU. Het han duoc quet (sweep)
+//   khi khoi dong + moi lan doc kho / rut tai khoan. Xem
+//   GET /api/gmail/claims.
+// - TIEP SUC SAU KHI SERVER/PHONE KHOI DONG LAI: pipeline runs duoc
+//   luu xuong data/pipeline-runs.json sau moi lan chuyen trang thai;
+//   server mo lai thi khoi phuc: run dang Cho cham tay -> ve dung
+//   waiting_manual, bam "Chay tiep" la chay tiep tu buoc sau; run
+//   dang chay do -> trang thai 'interrupted', bam "Chay tiep" la
+//   chay lai tu buoc dang do. Vong xem (watch) cung luu xuong
+//   data/watch-state.json; khoi phuc thi danh dau 'interrupted',
+//   KHONG tu chay lai (nguoi dung tu bam Bat dau xem khi can).
+// - Flow DANG KY LINE (Singapore + Google) — pipeline "dang-ky-line":
+//   claim Gmail + dang nhap Google (tai dung trinh tu 3.1) -> buoc
+//   CHAM TAY go cac tai khoan Google khac (xoa tai khoan khong tu
+//   dong hoa duoc) -> mo LINE -> trinh tu dang ky: bam bat dau ->
+//   "Googleで続ける" -> chon quoc gia Singapore (シンガポール/+65)
+//   o man hinh nhap so dien thoai -> dong y/tiep theo -> thanh cong
+//   khi thay chu chao/man hinh home cua LINE (ghi data/line-state.json,
+//   the may hien badge "LINE ✔"). Gap man hinh xac minh/SMS thi dung
+//   Cho cham tay. Dau chu trong muc "lineRegister" cua flow-config.
 //
 // Giai doan 2 them:
 // - Trang thai deviceOwner / accessibility cua tung may.
@@ -71,6 +109,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
+const qrcode = require('./qrcode');
 
 const TCP_PORT = process.env.FARM_TCP_PORT ? parseInt(process.env.FARM_TCP_PORT, 10) : 8787;
 const HTTP_PORT = process.env.FARM_HTTP_PORT ? parseInt(process.env.FARM_HTTP_PORT, 10) : 8080;
@@ -82,7 +122,15 @@ const POOL_FILE = path.join(DATA_DIR, 'gmail-pool.json');
 const HEO_FILE = path.join(DATA_DIR, 'heo-pool.json');
 const CHECKIN_FILE = path.join(DATA_DIR, 'checkin-state.json');
 const GAME_LINK_FILE = path.join(DATA_DIR, 'game-link.json');
+const RUNS_FILE = path.join(DATA_DIR, 'pipeline-runs.json');
+const WATCH_FILE = path.join(DATA_DIR, 'watch-state.json');
+const LINE_FILE = path.join(DATA_DIR, 'line-state.json');
 const PROVISION_FILE = path.join(__dirname, 'provisioning.json');
+// Ma ghep noi QR song 300 giay (kieu Tokium). PAIRING_TTL_MS chi de
+// kiem chung tu dong dung thoi gian song ngan — chay that dung 300s.
+const PAIRING_TTL_MS = Math.max(1000, parseInt(process.env.PAIRING_TTL_MS || '300000', 10) || 300000);
+// Claim Gmail song 12 gio (cache kieu Tokium /email-claim).
+const CLAIM_TTL_MS = 12 * 3600 * 1000;
 
 const devices = new Map(); // androidId -> device object
 let cmdCounter = 0;
@@ -111,6 +159,12 @@ function publicDevice(d) {
     gmailAssigned: (typeof pool !== 'undefined')
       ? ((pool.accounts.find((a) => a.status === 'assigned' && a.deviceId === d.id) || {}).email || null)
       : null,
+    gmailClaimed: (typeof pool !== 'undefined')
+      ? ((pool.accounts.find((a) => a.status === 'ready' && a.claimedByDeviceId === d.id && isClaimLive(a)) || {}).email || null)
+      : null,
+    pairedViaQr: !!d.pairedViaQr,
+    pairedAt: d.pairedAt || null,
+    line: (typeof lineState !== 'undefined') ? publicLine(d.id) : null,
     heoAssigned: (typeof heoPool !== 'undefined')
       ? ((heoPool.accounts.find((a) => a.status === 'assigned' && a.deviceId === d.id) || {}).username || null)
       : null,
@@ -156,6 +210,79 @@ function handleAgentMessage(dev, msg) {
   }
 }
 
+// ================= Ghep noi bang QR (Giai doan 5) =================
+// Dashboard tao mot phien ghep noi: ma ngau nhien song PAIRING_TTL_MS
+// (mac dinh 300 giay nhu Tokium). Payload QR la URI:
+//   farmpair://pair?h=<IP-LAN>&p=<cong TCP>&c=<ma>
+// Agent v5 quet ma trong app (camera) hoac bat ky app camera/Lens nao
+// mo URI nay deu dan vao Farm Agent (intent-filter farmpair://).
+// Agent gui kem "pairCode" trong hello; server kiem tra o day:
+//   - khong co phien -> 'unknown'
+//   - qua han        -> 'expired' (xoa phien)
+//   - da dung boi MAY KHAC -> 'used'
+//   - hop le (hoac chinh may do ket noi lai trong thoi han) -> ok,
+//     danh dau usedBy = deviceId (mot ma chi ghep mot may; may do
+//     gui lai ma cua chinh minh khi ket noi lai van duoc chap nhan
+//     de tranh ket khi rot mang ngay luc vua ghep xong).
+// Bi tu choi: server gui {"type":"pair_rejected","reason":...} roi
+// dong ket noi; agent hien thong bao tieng Viet va dung tu ket noi lai.
+// May KHONG gui pairCode (da cau hinh san tu truoc) -> bo qua hoan
+// toan, ket noi nhu cu (tuong thich nguoc).
+const pairingSessions = new Map(); // code -> {code, createdAt, expiresAt, usedBy}
+
+function newPairCode() {
+  return crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'pair0000';
+}
+
+function createPairingSession() {
+  // Don cac phien da het han / da dung lau — chi giu toi da vai phien.
+  const t = Date.now();
+  for (const [code, s] of pairingSessions) {
+    if (t > s.expiresAt) pairingSessions.delete(code);
+  }
+  while (pairingSessions.size >= 5) {
+    pairingSessions.delete(pairingSessions.keys().next().value);
+  }
+  const code = newPairCode();
+  const s = { code: code, createdAt: nowIso(), expiresAt: new Date(t + PAIRING_TTL_MS).toISOString(), usedBy: null };
+  pairingSessions.set(code, s);
+  return s;
+}
+
+function pairingPayload(session, req) {
+  return 'farmpair://pair?h=' + encodeURIComponent(lanIp(req)) +
+    '&p=' + TCP_PORT + '&c=' + encodeURIComponent(session.code);
+}
+
+function publicPairing(session, req) {
+  const payload = pairingPayload(session, req);
+  let svg = '';
+  try { svg = qrcode.svg(payload); } catch (e) { svg = ''; }
+  return {
+    ok: true,
+    code: session.code,
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    ttlSeconds: Math.round(PAIRING_TTL_MS / 1000),
+    payload: payload,
+    svg: svg,
+    usedBy: session.usedBy || null
+  };
+}
+
+/** Kiem tra ma ghep noi cho mot may. Tra {ok:true} hoac {ok:false, reason}. */
+function validatePairCode(code, deviceId) {
+  const s = pairingSessions.get(code);
+  if (!s) return { ok: false, reason: 'unknown' };
+  if (Date.now() > Date.parse(s.expiresAt)) {
+    pairingSessions.delete(code);
+    return { ok: false, reason: 'expired' };
+  }
+  if (s.usedBy && s.usedBy !== deviceId) return { ok: false, reason: 'used' };
+  s.usedBy = deviceId;
+  return { ok: true, session: s };
+}
+
 const tcpServer = net.createServer((socket) => {
   socket.setEncoding('utf8');
   let buffer = '';
@@ -175,6 +302,22 @@ const tcpServer = net.createServer((socket) => {
         // Tin nhan dau tien phai co androidId (hello)
         const id = msg.androidId || msg.id;
         if (!id) continue;
+        // Giai doan 5: hello co pairCode -> kiem tra ma ghep noi QR
+        // TRUOC khi chap nhan may. Sai ma: gui pair_rejected + dong
+        // ket noi, khong dang ky may.
+        let pairJustAccepted = false;
+        if (msg.type === 'hello' && msg.pairCode) {
+          const verdict = validatePairCode(String(msg.pairCode), id);
+          if (!verdict.ok) {
+            console.log('[pairing] tu choi ma ghep noi (' + verdict.reason + ') cho may ' + id);
+            try {
+              socket.write(JSON.stringify({ type: 'pair_rejected', reason: verdict.reason }) + '\n', 'utf8',
+                () => { try { socket.destroy(); } catch (e) {} });
+            } catch (e) { try { socket.destroy(); } catch (e2) {} }
+            return;
+          }
+          pairJustAccepted = true;
+        }
         let existing = devices.get(id);
         if (!existing) {
           existing = {
@@ -182,6 +325,7 @@ const tcpServer = net.createServer((socket) => {
             battery: null, charging: false, network: 'none', screenOn: false,
             online: false, lastSeen: null, agentVersion: '',
             deviceOwner: false, accessibility: false,
+            pairedViaQr: false, pairedAt: null,
             screenW: 0, screenH: 0,
             socket: null, pending: new Map()
           };
@@ -195,6 +339,12 @@ const tcpServer = net.createServer((socket) => {
         dev.socket = socket;
         dev.online = true;
         dev.lastSeen = Date.now();
+        if (pairJustAccepted) {
+          dev.pairedViaQr = true;
+          dev.pairedAt = nowIso();
+          try { socket.write(JSON.stringify({ type: 'pair_result', ok: true }) + '\n', 'utf8'); } catch (e) {}
+          console.log('[pairing] ghep noi QR thanh cong cho may ' + id);
+        }
       }
       handleAgentMessage(dev, msg);
     }
@@ -299,6 +449,7 @@ function savePool() {
   }
 }
 loadPool();
+sweepExpiredClaims(); // Giai doan 5: don claim het han ngay khi khoi dong
 
 function publicAccount(a) {
   return {
@@ -308,7 +459,14 @@ function publicAccount(a) {
     status: a.status,
     deviceId: a.deviceId || null,
     assignedAt: a.assignedAt || null,
-    createdAt: a.createdAt || null
+    createdAt: a.createdAt || null,
+    // Giai doan 5: claim con song (neu co) — dashboard hien rieng
+    // "Dang giu boi May X · het han HH:MM", khac han voi "Da cap".
+    claim: isClaimLive(a) ? {
+      deviceId: a.claimedByDeviceId,
+      claimedAt: a.claimedAt || null,
+      expiresAt: a.claimExpiresAt || null
+    } : null
   };
 }
 
@@ -353,8 +511,15 @@ function importAccounts(text) {
 
 /** Cap tai khoan ready tiep theo cho mot may. Tra {account} hoac {error}. */
 function assignGmail(deviceId) {
-  const a = pool.accounts.find((x) => x.status === 'ready');
+  sweepExpiredClaims();
+  // Bo qua tai khoan dang bi MAY KHAC giu (claim con song) — tai
+  // khoan do vo hinh voi moi lan rut khac cho den khi claim het han
+  // hoac duoc nha. Tai khoan chinh may nay dang giu thi cap dut luon
+  // (chuyen claim thanh Da cap).
+  const a = pool.accounts.find((x) => x.status === 'ready' &&
+    (!isClaimLive(x) || x.claimedByDeviceId === deviceId));
   if (!a) return { error: 'pool_empty' };
+  clearClaimFields(a);
   a.status = 'assigned';
   a.deviceId = deviceId;
   a.assignedAt = nowIso();
@@ -364,6 +529,114 @@ function assignGmail(deviceId) {
 
 function findAccountForDevice(deviceId) {
   return pool.accounts.find((x) => x.status === 'assigned' && x.deviceId === deviceId) || null;
+}
+
+/**
+ * Tai khoan may dang GIU CLAIM (chua chuyen assigned) — can cho cac
+ * buoc chay lai sau khi server khoi dong lai: _gmailAccount chi ton
+ * tai trong bo nho cua lan chay truoc, con claim thi nam o pool.
+ */
+function findClaimForDevice(deviceId) {
+  sweepExpiredClaims();
+  return pool.accounts.find((x) => x.status === 'ready' &&
+    x.claimedByDeviceId === deviceId && isClaimLive(x)) || null;
+}
+
+// ================= Gmail CLAIM ticket + cache 12 gio (Giai doan 5) =================
+// Hoc mo hinh /email-ticket -> /email-claim cua Tokium: truoc khi
+// dang nhap, flow "giu" (claim) mot tai khoan bang ticket ngau nhien
+// trong CLAIM_TTL_MS (12 gio). Trong thoi gian giu:
+//   - chi may dang giu moi thay/duoc dung tai khoan do; may khac rut
+//     kho thi tai khoan nay "vo hinh" (het tai khoan khac -> pool_empty);
+//   - may dang giu chay lai flow thi nhan lai DUNG tai khoan + ticket
+//     do (cache 12 gio — khong ton them tai khoan moi).
+// Dang nhap Google thanh cong -> claim chuyen thanh assigned.
+// Flow loi/dung, xoa may, danh dau die, het han -> claim nha ve ready.
+// Dung Cho cham tay (park) thi claim VAN GIU (nguoi dung xu ly tay
+// xong chay tiep bang chinh tai khoan do).
+// Truong claim tren entry: claimTicket, claimedByDeviceId, claimedAt,
+// claimExpiresAt (null khi khong co claim). Mat khau van che moi noi.
+
+function isClaimLive(a) {
+  return !!(a && a.claimTicket && a.claimExpiresAt && Date.parse(a.claimExpiresAt) > Date.now());
+}
+
+function clearClaimFields(a) {
+  a.claimTicket = null;
+  a.claimedByDeviceId = null;
+  a.claimedAt = null;
+  a.claimExpiresAt = null;
+}
+
+/** Quet cac claim da het han -> nha ve ready. Tra so claim da nha. */
+function sweepExpiredClaims() {
+  let n = 0;
+  for (const a of pool.accounts) {
+    if (a.claimTicket && !isClaimLive(a)) {
+      clearClaimFields(a);
+      n++;
+    }
+  }
+  if (n > 0) {
+    savePool();
+    console.log('[gmail-claim] da nha ' + n + ' claim het han ve kho');
+  }
+  return n;
+}
+
+/** Claim con song ma mot may dang giu (neu co). */
+function findClaimForDevice(deviceId) {
+  return pool.accounts.find((x) => x.status === 'ready' && x.claimedByDeviceId === deviceId && isClaimLive(x)) || null;
+}
+
+/**
+ * Lay tai khoan cho mot may theo co che claim:
+ *  - may da co assigned -> { account, source:'assigned' }
+ *  - may dang giu claim con song -> { account, source:'claim', ticket } (ticket CU)
+ *  - nguoc lai rut tai khoan ready chua ai giu, danh dau claim moi
+ *    -> { account, source:'new_claim', ticket }
+ *  - het -> { error:'pool_empty' }
+ */
+function claimGmail(deviceId) {
+  sweepExpiredClaims();
+  const assigned = findAccountForDevice(deviceId);
+  if (assigned) return { account: assigned, source: 'assigned' };
+  const held = findClaimForDevice(deviceId);
+  if (held) return { account: held, source: 'claim', ticket: held.claimTicket };
+  const a = pool.accounts.find((x) => x.status === 'ready' && !isClaimLive(x));
+  if (!a) return { error: 'pool_empty' };
+  a.claimTicket = 'ct-' + crypto.randomBytes(9).toString('hex');
+  a.claimedByDeviceId = deviceId;
+  a.claimedAt = nowIso();
+  a.claimExpiresAt = new Date(Date.now() + CLAIM_TTL_MS).toISOString();
+  savePool();
+  console.log('[gmail-claim] may ' + deviceId + ' giu tai khoan ' + a.email + ' (ticket ' + a.claimTicket + ', het han ' + a.claimExpiresAt + ')');
+  return { account: a, source: 'new_claim', ticket: a.claimTicket };
+}
+
+/** Dang nhap xong: claim cua may chuyen thanh assigned. Tra account hoac null. */
+function convertClaimToAssignment(deviceId) {
+  const a = findClaimForDevice(deviceId);
+  if (!a) return findAccountForDevice(deviceId);
+  clearClaimFields(a);
+  a.status = 'assigned';
+  a.deviceId = deviceId;
+  a.assignedAt = nowIso();
+  savePool();
+  console.log('[gmail-claim] claim cua may ' + deviceId + ' chuyen thanh Da cap: ' + a.email);
+  return a;
+}
+
+/** Nha claim cua mot may ve ready (flow loi/dung, xoa may...). */
+function releaseGmailClaim(deviceId, why) {
+  const a = pool.accounts.find((x) => x.claimedByDeviceId === deviceId && x.claimTicket);
+  if (!a) return null;
+  const email = a.email;
+  clearClaimFields(a);
+  if (a.status !== 'assigned') a.status = 'ready';
+  savePool();
+  console.log('[gmail-claim] nha claim ' + email + ' cua may ' + deviceId + (why ? ' (' + why + ')' : ''));
+  return email;
 }
 
 // ================= Kho tai khoan XEM HEO chua dang nhap (Giai doan 3.2) =================
@@ -536,6 +809,40 @@ function recordCheckin(deviceId) {
   return publicCheckin(deviceId);
 }
 
+// ================= Trang thai DANG KY LINE (Giai doan 5) =================
+// File data/line-state.json: { <deviceId>: { doneAt, email } } — ghi
+// khi flow "dang-ky-line" thay dau thanh cong tren LINE. The may hien
+// badge "LINE ✔" tu trang thai nay (song sot qua cac lan khoi dong).
+let lineState = {};
+
+function loadLineState() {
+  try {
+    const j = JSON.parse(fs.readFileSync(LINE_FILE, 'utf8'));
+    if (j && typeof j === 'object' && !Array.isArray(j)) lineState = j;
+  } catch (e) { lineState = {}; }
+}
+function saveLineState() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(LINE_FILE, JSON.stringify(lineState, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[line] khong ghi duoc state:', e.message);
+  }
+}
+loadLineState();
+
+function publicLine(deviceId) {
+  const st = lineState[deviceId];
+  if (!st || !st.doneAt) return { done: false, doneAt: null };
+  return { done: true, doneAt: st.doneAt };
+}
+
+function recordLineDone(deviceId, email) {
+  lineState[deviceId] = { doneAt: nowIso(), email: email || null };
+  saveLineState();
+  return publicLine(deviceId);
+}
+
 // ================= Link game chuyen dung (Giai doan 3.2) =================
 // File data/game-link.json: { url, updatedAt } — link game chuyen dung
 // (hoac noi dung ma QR) ma cac Nik xem heo PHAI mo de xem thi ben Link
@@ -607,6 +914,31 @@ const FLOW_DEFAULTS = {
     entryMarkers: ['チェックイン', 'ボーナス', 'ポイント'],
     buttonMarkers: ['チェックインする', 'チェックイン'],
     successMarkers: ['チェックイン完了', 'チェックイン成功', 'ポイントを獲得しました', '付与されました']
+  },
+  // Giai doan 5: dau chu cho flow "dang-ky-line" (dang ky LINE bang
+  // Google, quoc gia Singapore — hoc job cua Tokium):
+  //   startMarkers: nut bat dau dang ky tren man hinh chao LINE;
+  //   googleContinue: nut tiep tuc bang Google;
+  //   countryMarkers: chu nhan dien muc chon quoc gia Singapore
+  //     (ten quoc gia / ma +65) — dung ca de tim o tim kiem lan dong
+  //     da chon trong man hinh nhap so dien thoai;
+  //   countrySearchText: chu go vao o tim kiem quoc gia;
+  //   agreeMarkers: nut dong y / tiep theo o buoc cuoi;
+  //   verifyMarkers: chu bao LINE bat XAC MINH (SMS/ma) -> Cho cham tay;
+  //   successMarkers: chu bao da vao LINE (chao/home).
+  // Mac dinh tieng Nhat — CAN HIEU CHUAN theo man hinh LINE that o
+  // lan chay dau, giong cac flow TikTok (xem HUONG-DAN).
+  lineRegister: {
+    startMarkers: ['新規登録', '登録', 'はじめる'],
+    googleContinue: ['Googleで続ける', 'Googleでログイン'],
+    countryMarkers: ['シンガポール', 'Singapore', '+65'],
+    countrySearchText: 'シンガポール',
+    agreeMarkers: ['同意する', '次へ'],
+    // LUU Y: '電話番号を入力' KHONG nam o day — do la tieu de man
+    // hinh NHAP SO DIEN THOAI (co o chon quoc gia, xu ly duoc), dua
+    // vao day se lam flow dung Cho cham tay ngay o buoc nhap so.
+    verifyMarkers: ['本人確認', '確認コード', '認証コード', 'セキュリティコード', 'ロボットではありません'],
+    successMarkers: ['ようこそ', 'LINEへようこそ', 'ホーム']
   }
 };
 
@@ -650,6 +982,21 @@ function sanitizeCheckin(v) {
   };
 }
 
+function sanitizeLineRegister(v) {
+  const d = FLOW_DEFAULTS.lineRegister;
+  const s = (v && typeof v === 'object') ? v : {};
+  return {
+    startMarkers: sanitizeMarkers(s.startMarkers, d.startMarkers),
+    googleContinue: sanitizeMarkers(s.googleContinue, d.googleContinue),
+    countryMarkers: sanitizeMarkers(s.countryMarkers, d.countryMarkers),
+    countrySearchText: (typeof s.countrySearchText === 'string' && s.countrySearchText.trim())
+      ? s.countrySearchText : d.countrySearchText,
+    agreeMarkers: sanitizeMarkers(s.agreeMarkers, d.agreeMarkers),
+    verifyMarkers: sanitizeMarkers(s.verifyMarkers, d.verifyMarkers),
+    successMarkers: sanitizeMarkers(s.successMarkers, d.successMarkers)
+  };
+}
+
 function loadFlowConfig() {
   try {
     const raw = fs.readFileSync(FLOW_CONFIG_FILE, 'utf8');
@@ -660,7 +1007,8 @@ function loadFlowConfig() {
       checkinSuccessMarkers: sanitizeMarkers(j.checkinSuccessMarkers, FLOW_DEFAULTS.checkinSuccessMarkers),
       signin: sanitizeSignin(j.signin),
       tiktokLogin: sanitizeTiktokLogin(j.tiktokLogin),
-      checkin: sanitizeCheckin(j.checkin)
+      checkin: sanitizeCheckin(j.checkin),
+      lineRegister: sanitizeLineRegister(j.lineRegister)
     };
   } catch (e) {
     return {
@@ -668,7 +1016,8 @@ function loadFlowConfig() {
       checkinSuccessMarkers: FLOW_DEFAULTS.checkinSuccessMarkers.slice(),
       signin: sanitizeSignin(null),
       tiktokLogin: sanitizeTiktokLogin(null),
-      checkin: sanitizeCheckin(null)
+      checkin: sanitizeCheckin(null),
+      lineRegister: sanitizeLineRegister(null)
     };
   }
 }
@@ -1672,6 +2021,213 @@ async function checkinSequence(deviceId, hooks) {
   return { outcome: 'success', already: false };
 }
 
+// ================= Trinh tu DANG KY LINE (Giai doan 5) =================
+// Mo hinh theo job "Register LINE with Singapore + Google" cua Tokium
+// nhung chi trong gioi han Tro nang lam duoc mot cach trung thuc:
+// pipeline da mo LINE o buoc truoc; trinh tu nay dieu huong dang ky:
+//   man hinh chao -> bam bat dau (startMarkers) -> "Googleで続ける"
+//   -> man hinh nhap so dien thoai: chon quoc gia Singapore
+//      (cham o quoc gia -> tim/cham シンガポール trong danh sach)
+//   -> bam dong y / tiep theo -> thay chu thanh cong thi xong.
+// Gap chu XAC MINH (SMS/ma) -> dung Cho cham tay (hooks.park).
+// Khong tu chon duoc quoc gia Singapore -> dung Cho cham tay kem
+// ghi chu ro rang thay vi doan bua. Xoa tai khoan Google khac la
+// buoc "manual" rieng trong pipeline — KHONG tu dong hoa.
+// Dau chu nam o muc "lineRegister" cua flow-config.json (tieng Nhat,
+// can hieu chuan theo man hinh LINE that o lan chay dau).
+const LINE_PKG = 'jp.naver.line.android';
+const LINE_VERIFY_NOTE = 'Máy đang ở bước xác minh của LINE (SMS/mã xác nhận) — xử lý chạm tay trên máy rồi bấm Chạy tiếp';
+const LINE_COUNTRY_NOTE = 'Không tự chọn được quốc gia Singapore trên màn hình LINE — chọn tay シンガポール (+65) trên máy rồi bấm Chạy tiếp';
+
+/** Phan loai man hinh LINE theo dau chu — thu tu uu tien co chu dich. */
+function classifyLineScreen(nodes, cfg) {
+  if (!nodes) return 'unknown';
+  if (dumpHasAny(nodes, cfg.successMarkers)) return 'success';
+  if (dumpHasAny(nodes, cfg.verifyMarkers)) return 'verify';
+  if (dumpHasAny(nodes, cfg.googleContinue)) return 'google';
+  const hasSg = !!dumpHasAny(nodes, cfg.countryMarkers);
+  const hasJp = !!dumpHasAny(nodes, ['日本', '+81']);
+  const hasEdit = !!firstEditText(nodes);
+  const phoneish = !!dumpHasAny(nodes, ['電話番号', '電話', '+81', '日本']);
+  if (hasSg && hasJp && hasEdit) return 'countryList'; // danh sach quoc gia (co o tim kiem + nhieu dong)
+  if (hasSg && hasJp && !phoneish) return 'countryList';
+  if (hasSg && phoneish) return 'phoneReady'; // da o man hinh nhap so, quoc gia = Singapore
+  if (hasSg && dumpHasAny(nodes, cfg.agreeMarkers)) return 'phoneReady';
+  if (hasSg) return 'countryList';
+  if (phoneish && hasEdit) return 'phoneEntry'; // man hinh nhap so, quoc gia CHUA phai Singapore
+  if (dumpHasAny(nodes, cfg.startMarkers)) return 'start';
+  if (dumpHasAny(nodes, cfg.agreeMarkers)) return 'agree';
+  return 'unknown';
+}
+
+/** Tim node dau tien chua mot trong cac marker (co bounds hop le). */
+function findNodeWithAny(nodes, markers) {
+  for (const m of markers) {
+    if (!m) continue;
+    for (const n of nodes) {
+      const hay = ((n.text || '') + '\n' + (n.desc || ''));
+      if (hay.indexOf(m) >= 0 && Array.isArray(n.bounds) && n.bounds.length === 4) return n;
+    }
+  }
+  return null;
+}
+
+/** Cham vao tam mot node theo bounds cua no. */
+async function tapNodeCenter(deviceId, node) {
+  if (!node) return false;
+  const x = Math.round((node.bounds[0] + node.bounds[2]) / 2);
+  const y = Math.round((node.bounds[1] + node.bounds[3]) / 2);
+  try {
+    const res = await sendCommand(deviceId, 'tap', { x: x, y: y }, 15000);
+    return !!(res && res.ok);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Vai chu dau tien thay duoc tren man hinh — lam "snippet" bao loi. */
+function dumpSnippet(nodes, max) {
+  const texts = [];
+  for (const n of (nodes || [])) {
+    const t = (n.text || n.desc || '').trim();
+    if (t) texts.push(t);
+    if (texts.length >= (max || 6)) break;
+  }
+  return texts.join(' / ');
+}
+
+async function lineRegisterSequence(deviceId, hooks) {
+  hooks = hooks || {};
+  const log = (msg) => {
+    addEvent('line_register', deviceId, msg);
+    if (hooks.log) hooks.log(msg);
+  };
+  const cfg = loadFlowConfig().lineRegister;
+  const out = { outcome: 'error', note: '' };
+  const deadline = Date.now() + 4 * 60 * 1000;
+  let actions = 0;
+  let countryAttempts = 0;
+  let unknownSince = 0;
+  let lastNodes = null;
+
+  async function parkWith(note, what) {
+    log(what + ' — dừng chờ chạm tay');
+    if (!hooks.park) { out.outcome = 'verify'; out.note = note; return 'verify'; }
+    const how = await hooks.park(note);
+    if (how === 'stopped') { out.outcome = 'stopped'; return 'stopped'; }
+    return 'resumed';
+  }
+
+  log('Đăng ký LINE: bắt đầu điều hướng màn hình đăng ký (quốc gia Singapore)...');
+  while (true) {
+    if (seqIsStopped(hooks)) { out.outcome = 'stopped'; return out; }
+    if (Date.now() >= deadline) {
+      out.note = 'Hết 4 phút điều hướng đăng ký LINE mà chưa xong' +
+        (lastNodes ? ' — màn hình cuối: ' + dumpSnippet(lastNodes) : '');
+      return out;
+    }
+    const nodes = await dumpUiNodes(deviceId);
+    if (!nodes) {
+      if (!await sleepUnlessStopped(1500, hooks)) { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    lastNodes = nodes;
+    const cls = classifyLineScreen(nodes, cfg);
+    if (cls !== 'unknown') unknownSince = 0;
+
+    if (cls === 'success') {
+      out.outcome = 'done';
+      log('✅ Đăng ký LINE hoàn tất (đã vào màn hình chính của LINE)');
+      return out;
+    }
+    if (cls === 'verify') {
+      const p = await parkWith(LINE_VERIFY_NOTE, 'LINE yêu cầu xác minh');
+      if (p !== 'resumed') return out;
+      continue;
+    }
+    if (actions > 14) {
+      out.note = 'Đã thực hiện quá nhiều thao tác mà LINE chưa vào màn hình chính — kiểm tra máy / dấu chữ lineRegister trong flow-config.json' +
+        ' — màn hình cuối: ' + dumpSnippet(nodes);
+      return out;
+    }
+    if (cls === 'google') {
+      const t = await tapFirstMarker(deviceId, cfg.googleContinue);
+      if (t) { actions++; log('Đã bấm "' + t + '" (tiếp tục bằng Google), chờ màn hình tiếp...'); }
+      if (!await sleepUnlessStopped(2000, hooks)) { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    if (cls === 'start') {
+      const t = await tapFirstMarker(deviceId, cfg.startMarkers);
+      if (t) { actions++; log('Đã bấm bắt đầu đăng ký ("' + t + '")'); }
+      if (!await sleepUnlessStopped(2000, hooks)) { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    if (cls === 'countryList') {
+      // Danh sach quoc gia dang mo: neu o tim kiem con trong thi go
+      // ten Singapore truoc (dung sai — danh sach co san thi cham luon).
+      const sgNode = findNodeWithAny(nodes, cfg.countryMarkers.filter((m) => m !== '+65'));
+      if (sgNode) {
+        if (await tapNodeCenter(deviceId, sgNode)) {
+          actions++;
+          log('Đã chọn quốc gia Singapore trong danh sách');
+        }
+      } else {
+        const et = firstEditText(nodes);
+        if (et && !anyEditTextHasText(nodes)) {
+          await tapNodeCenter(deviceId, et);
+          await sleepMs(600);
+          await inputTextWithRetry(deviceId, cfg.countrySearchText, { log: log });
+          actions++;
+          log('Đã gõ "' + cfg.countrySearchText + '" vào ô tìm quốc gia');
+        }
+      }
+      if (!await sleepUnlessStopped(1500, hooks)) { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    if (cls === 'phoneReady') {
+      const t = await tapFirstMarker(deviceId, cfg.agreeMarkers);
+      if (t) { actions++; log('Quốc gia đã là Singapore — đã bấm "' + t + '", chờ LINE xử lý...'); }
+      if (!await sleepUnlessStopped(2500, hooks)) { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    if (cls === 'phoneEntry') {
+      // Man hinh nhap so nhung quoc gia chua phai Singapore: cham
+      // vao o quoc gia (node chua 日本/+81) de mo danh sach chon.
+      countryAttempts++;
+      if (countryAttempts > 2) {
+        const p = await parkWith(LINE_COUNTRY_NOTE, 'Không tự chọn được quốc gia Singapore');
+        if (p !== 'resumed') return out;
+        countryAttempts = 0;
+        continue;
+      }
+      const field = findNodeWithAny(nodes, ['+81', '日本']);
+      if (field && await tapNodeCenter(deviceId, field)) {
+        actions++;
+        log('Đã mở danh sách chọn quốc gia (lần ' + countryAttempts + ')');
+      } else {
+        const p = await parkWith(LINE_COUNTRY_NOTE, 'Không thấy ô chọn quốc gia trên màn hình nhập số');
+        if (p !== 'resumed') return out;
+        countryAttempts = 0;
+      }
+      if (!await sleepUnlessStopped(1500, hooks)) { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    if (cls === 'agree') {
+      const t = await tapFirstMarker(deviceId, cfg.agreeMarkers);
+      if (t) { actions++; log('Đã bấm "' + t + '"'); }
+      if (!await sleepUnlessStopped(2500, hooks)) { out.outcome = 'stopped'; return out; }
+      continue;
+    }
+    // unknown: cho man hinh on dinh; lau qua thi bao loi kem snippet
+    if (!unknownSince) unknownSince = Date.now();
+    if (Date.now() - unknownSince > 25000) {
+      out.note = 'Không nhận diện được màn hình LINE sau 25 giây (kiểm tra máy / dấu chữ lineRegister trong flow-config.json) — màn hình: ' + dumpSnippet(nodes);
+      return out;
+    }
+    if (!await sleepUnlessStopped(1500, hooks)) { out.outcome = 'stopped'; return out; }
+  }
+}
+
 /**
  * Tao ham park() cho mot buoc pipeline: dat buoc + may vao waiting_manual
  * va cho POST /api/pipeline/resume (dung lai co che cua buoc "manual").
@@ -1682,6 +2238,7 @@ function makePipelinePark(run, dr, step) {
     step.note = note;
     dr.status = 'waiting_manual';
     console.log('[pipeline] ' + run.id + ' ' + dr.deviceId + ' CHO CHAM TAY (gmail): ' + note);
+    saveRuns(); // Giai doan 5: luu ca trang thai Cho cham tay trong trinh tu
     const how = await new Promise((resolve) => { dr._resumeResolve = resolve; });
     dr._resumeResolve = null;
     if (run.stopped || how === 'stopped') return 'stopped';
@@ -1738,6 +2295,30 @@ const PIPELINES = [
     steps: [
       { type: 'assign_heo', reuseAssigned: true, name: 'Cấp tài khoản heo từ kho cho máy' },
       { type: 'tiktok_login', name: 'Tự đăng nhập TikTok Lite bằng tài khoản vừa cấp' }
+    ]
+  },
+  {
+    // Giai doan 5: dang ky LINE bang Google voi quoc gia Singapore —
+    // hoc job "Register LINE with Singapore + Google" cua Tokium:
+    //   1) claim Gmail (co che ticket/cache 12 gio) cho may;
+    //   2) tu dang nhap Google bang Gmail do (trinh tu 3.1 — dung
+    //      Cho cham tay khi Google bat xac minh);
+    //   3) buoc CHAM TAY: go cac tai khoan Google KHAC khoi may —
+    //      Tokium cung yeu cau "Remove existing Google accounts
+    //      first"; xoa tai khoan KHONG tu dong hoa duoc nen day la
+    //      buoc manual, tuyet doi khong co agent tu xoa;
+    //   4) mo LINE (chua cai -> loi app_not_installed ro rang);
+    //   5) trinh tu dang ky LINE (lineRegisterSequence): chon Google,
+    //      chon quoc gia Singapore, dong y — gap xac minh/SMS thi
+    //      dung Cho cham tay; thanh cong thi ghi line-state.json.
+    id: 'dang-ky-line',
+    name: 'Đăng ký LINE (Singapore + Google)',
+    steps: [
+      { type: 'assign_gmail', reuseAssigned: true, name: 'Cấp Gmail từ kho cho máy' },
+      { type: 'gmail_signin', name: 'Đăng nhập Google bằng Gmail vừa cấp' },
+      { type: 'manual', name: 'Gỡ các tài khoản Google KHÁC khỏi máy (Cài đặt → Tài khoản → chọn tài khoản khác → Xoá tài khoản), chỉ giữ Gmail vừa cấp — xoá tài khoản không tự động hoá được' },
+      { type: 'command', cmd: 'open_app', args: { 'package': 'jp.naver.line.android' }, name: 'Mở LINE' },
+      { type: 'line_register', name: 'Đăng ký LINE bằng Google (quốc gia Singapore)' }
     ]
   },
   {
@@ -1870,6 +2451,7 @@ function publicRun(run) {
     devices: Array.from(run.devices.values()).map((dr) => ({
       deviceId: dr.deviceId,
       status: dr.status,
+      restored: !!dr._restored,
       currentStep: dr.currentStep,
       steps: dr.steps.map((s) => ({
         type: s.type, name: s.name, status: s.status, note: s.note || '', at: s.at || null,
@@ -1881,24 +2463,31 @@ function publicRun(run) {
 
 function sleepMs(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-async function runDevicePipeline(run, dr) {
+async function runDevicePipelineInner(run, dr, startAt) {
   const devLabel = dr.deviceId;
-  for (let i = 0; i < dr.steps.length; i++) {
+  for (let i = (startAt || 0); i < dr.steps.length; i++) {
     if (run.stopped) { dr.status = 'stopped'; return; }
     const step = dr.steps[i];
     if (step.status === 'skipped') continue;
     dr.currentStep = i;
     step.at = nowIso();
+    saveRuns(); // Giai doan 5: luu trang thai truoc khi chay buoc
     try {
       if (step.type === 'assign_gmail') {
         step.status = 'running';
         // reuseAssigned (flow cap-gmail-tu-dong): may da co tai khoan
         // duoc cap thi dung lai tai khoan do, khong cap them tai khoan moi.
+        // Giai doan 5: chua co assigned thi dung co che CLAIM (ticket
+        // + cache 12 gio): may dang giu claim thi nhan lai dung tai
+        // khoan do; chua giu thi giu mot tai khoan moi. Claim chuyen
+        // thanh assigned khi dang nhap Google xong (buoc gmail_signin
+        // / nhanh withSignin ben duoi); flow loi/dung thi claim duoc
+        // nha o lop boc runDevicePipeline.
         let acct = step.reuseAssigned ? findAccountForDevice(dr.deviceId) : null;
         if (acct) {
           step.note = 'Dùng Gmail đã cấp cho máy: ' + acct.email;
         } else {
-          const res = assignGmail(dr.deviceId);
+          const res = claimGmail(dr.deviceId);
           if (res.error) {
             step.status = 'error';
             step.note = 'Kho Gmail hết tài khoản sẵn sàng (pool_empty)';
@@ -1907,7 +2496,9 @@ async function runDevicePipeline(run, dr) {
             return;
           }
           acct = res.account;
-          step.note = 'Đã cấp: ' + acct.email;
+          step.note = res.source === 'claim'
+            ? 'Dùng lại Gmail đang giữ cho máy (cache 12 giờ): ' + acct.email
+            : 'Đã giữ Gmail cho máy (claim 12 giờ): ' + acct.email;
         }
         dr._gmailAccount = acct;
         step.status = 'done';
@@ -1928,6 +2519,7 @@ async function runDevicePipeline(run, dr) {
             console.log('[pipeline] ' + run.id + ' ' + devLabel + ' assign_gmail+signin: ' + step.note);
             return;
           }
+          convertClaimToAssignment(dr.deviceId); // Giai doan 5: claim -> Da cap
           step.status = 'done';
           step.note = (step.note ? step.note + ' · ' : '') + 'Đã tự đăng nhập Google';
         }
@@ -1935,7 +2527,10 @@ async function runDevicePipeline(run, dr) {
         // Trinh tu dang nhap Google tu dong bang tai khoan da cap cho may
         // (buoc assign_gmail truoc do, hoac tai khoan da cap tu truoc).
         step.status = 'running';
-        const acct = dr._gmailAccount || findAccountForDevice(dr.deviceId);
+        // _gmailAccount (bo nho) -> assigned (pool) -> claim dang giu
+        // (pool; truong hop chay lai buoc nay sau khi server khoi
+        // dong lai, luc tai khoan moi o trang thai claim).
+        const acct = dr._gmailAccount || findAccountForDevice(dr.deviceId) || findClaimForDevice(dr.deviceId);
         if (!acct) {
           step.status = 'error';
           step.note = 'Máy chưa được cấp Gmail — chạy bước cấp Gmail trước';
@@ -1956,6 +2551,7 @@ async function runDevicePipeline(run, dr) {
           console.log('[pipeline] ' + run.id + ' ' + devLabel + ' gmail_signin: ' + step.note);
           return;
         }
+        convertClaimToAssignment(dr.deviceId); // Giai doan 5: claim -> Da cap
         step.status = 'done';
         step.note = 'Đã tự đăng nhập Google: ' + acct.email;
       } else if (step.type === 'assign_heo') {
@@ -2031,6 +2627,30 @@ async function runDevicePipeline(run, dr) {
             return;
           }
         }
+      } else if (step.type === 'line_register') {
+        // Giai doan 5: trinh tu dang ky LINE (Singapore + Google) —
+        // LINE da duoc mo o buoc command truoc do; gap xac minh/SMS
+        // thi dung Cho cham tay qua makePipelinePark nhu cac trinh tu
+        // dang nhap. Thanh cong -> ghi line-state.json (badge LINE ✔).
+        step.status = 'running';
+        const outL = await lineRegisterSequence(dr.deviceId, { park: makePipelinePark(run, dr, step), isStopped: () => !!run.stopped });
+        if (outL.outcome === 'stopped') {
+          step.status = 'stopped';
+          dr.status = 'stopped';
+          return;
+        }
+        if (outL.outcome !== 'done') {
+          step.status = 'error';
+          step.note = 'Đăng ký LINE chưa xong: ' + (outL.note || outL.outcome);
+          dr.status = 'error';
+          console.log('[pipeline] ' + run.id + ' ' + devLabel + ' line_register: ' + step.note);
+          return;
+        }
+        const gmailAcct = dr._gmailAccount || findAccountForDevice(dr.deviceId) || findClaimForDevice(dr.deviceId);
+        recordLineDone(dr.deviceId, gmailAcct ? gmailAcct.email : null);
+        addEvent('line_register', dr.deviceId, '💚 Đã đăng ký LINE xong (Singapore + Google)');
+        step.status = 'done';
+        step.note = 'Đã đăng ký LINE (Singapore + Google)';
       } else if (step.type === 'command') {
         step.status = 'running';
         const timeout = (step.cmd === 'install_url') ? 120000 : CMD_TIMEOUT_MS;
@@ -2052,6 +2672,7 @@ async function runDevicePipeline(run, dr) {
         step.status = 'waiting_manual';
         dr.status = 'waiting_manual';
         console.log('[pipeline] ' + run.id + ' ' + devLabel + ' CHO CHAM TAY: ' + step.name);
+        saveRuns(); // Giai doan 5: luu ca trang thai Cho cham tay
         const how = await new Promise((resolve) => { dr._resumeResolve = resolve; });
         dr._resumeResolve = null;
         if (run.stopped || how === 'stopped') {
@@ -2161,6 +2782,110 @@ async function runDevicePipeline(run, dr) {
   console.log('[pipeline] ' + run.id + ' ' + devLabel + ' HOAN THANH');
 }
 
+/**
+ * Lop boc chay pipeline (Giai doan 5): chay runDevicePipelineInner
+ * roi, du ket cuc the nao, cung (a) nha claim Gmail neu flow ket
+ * thuc loi/dung (claim cua flow xong tot da chuyen assigned o buoc
+ * dang nhap nen khong con gi de nha) va (b) luu runs xuong dia.
+ * startAt > 0 dung khi chay tiep run duoc khoi phuc sau khoi dong lai.
+ */
+async function runDevicePipeline(run, dr, startAt) {
+  try {
+    await runDevicePipelineInner(run, dr, startAt || 0);
+  } finally {
+    if (dr.status === 'error' || dr.status === 'stopped') {
+      releaseGmailClaim(dr.deviceId, 'pipeline ' + run.pipelineId + ' ket thuc ' + dr.status);
+    }
+    saveRuns();
+  }
+}
+
+// ================= Luu/khoi phuc pipeline runs (Giai doan 5) =================
+// Runs duoc ghi xuong data/pipeline-runs.json sau moi lan chuyen
+// trang thai (bat dau run, vao moi buoc, dung Cho cham tay, ket
+// thuc). Server khoi dong lai -> restoreRuns() nap lai:
+//   - may dang 'waiting_manual' -> giu nguyen waiting_manual va
+//     danh dau _restored: bam "Chay tiep" (POST /api/pipeline/resume)
+//     se coi buoc cham tay da xu ly xong va chay tiep tu buoc sau
+//     (khong the chay lai giua chung mot trinh tu dang dung);
+//   - may dang 'running' (server chet giua buoc) -> 'interrupted':
+//     bam "Chay tiep" se chay lai tu buoc dang do (buoc do duoc
+//     phat lai tu dau — cac buoc cua engine deu chiu duoc viec phat
+//     lai: cap/dang nhap co co che dung lai tai khoan + thu lai).
+// Giu toi da RUNS_KEEP run gan nhat trong file.
+const RUNS_KEEP = 20;
+let restoredRunCount = 0;
+
+function saveRuns() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const list = Array.from(runs.values())
+      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+      .slice(0, RUNS_KEEP)
+      .map((run) => ({
+        id: run.id,
+        pipelineId: run.pipelineId,
+        pipelineName: run.pipelineName,
+        startedAt: run.startedAt,
+        stopped: !!run.stopped,
+        updatedAt: nowIso(),
+        devices: Array.from(run.devices.values()).map((dr) => ({
+          deviceId: dr.deviceId,
+          status: dr.status,
+          currentStep: dr.currentStep,
+          steps: dr.steps
+        }))
+      }));
+    fs.writeFileSync(RUNS_FILE, JSON.stringify({ runs: list }, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[runs] khong ghi duoc pipeline-runs.json:', e.message);
+  }
+}
+
+function restoreRuns() {
+  let data = null;
+  try { data = JSON.parse(fs.readFileSync(RUNS_FILE, 'utf8')); } catch (e) { return; }
+  if (!data || !Array.isArray(data.runs)) return;
+  for (const pr of data.runs) {
+    if (!pr || !pr.id || runs.has(pr.id)) continue;
+    const run = {
+      id: pr.id,
+      pipelineId: pr.pipelineId,
+      pipelineName: pr.pipelineName,
+      startedAt: pr.startedAt,
+      stopped: !!pr.stopped,
+      devices: new Map()
+    };
+    let needsAttention = false;
+    for (const pd of (pr.devices || [])) {
+      const dr = {
+        deviceId: pd.deviceId,
+        status: pd.status,
+        currentStep: pd.currentStep || 0,
+        steps: Array.isArray(pd.steps) ? pd.steps : [],
+        _resumeResolve: null,
+        _restored: false
+      };
+      if (dr.status === 'running') {
+        dr.status = 'interrupted';
+        dr._restored = true;
+        needsAttention = true;
+      } else if (dr.status === 'waiting_manual') {
+        dr._restored = true;
+        needsAttention = true;
+      }
+      run.devices.set(pd.deviceId, dr);
+    }
+    runs.set(run.id, run);
+    const m = /^run-(\d+)-/.exec(run.id);
+    if (m) runCounter = Math.max(runCounter, parseInt(m[1], 10));
+    if (needsAttention) restoredRunCount++;
+  }
+  if (restoredRunCount > 0) {
+    console.log('[runs] da khoi phuc ' + restoredRunCount + ' run can chay tiep sau khi khoi dong lai');
+  }
+}
+
 function startPipeline(pipelineId, deviceIds, params) {
   const pipeline = PIPELINES.find((p) => p.id === pipelineId);
   if (!pipeline) return { error: 'pipeline_not_found' };
@@ -2184,6 +2909,7 @@ function startPipeline(pipelineId, deviceIds, params) {
     run.devices.set(deviceId, dr);
   }
   runs.set(run.id, run);
+  saveRuns(); // Giai doan 5: luu ngay tu luc bat dau
   for (const dr of run.devices.values()) {
     runDevicePipeline(run, dr).catch((e) => console.error('[pipeline] loi chay:', e));
   }
@@ -2262,6 +2988,14 @@ function sleepInterruptible(w, ms) {
 }
 
 async function watchLoop(w) {
+  try {
+    await watchLoopInner(w);
+  } finally {
+    saveWatchState(); // Giai doan 5: luu trang thai vong xem khi vong ket thuc
+  }
+}
+
+async function watchLoopInner(w) {
   let errStreak = 0;
   while (!w.stopRequested) {
     if (Date.now() > w.endsAtMs) {
@@ -2358,6 +3092,7 @@ async function startWatch(deviceId, opts) {
     stopRequested: false
   };
   watches.set(deviceId, w);
+  saveWatchState(); // Giai doan 5
   try {
     let res;
     if (w.gameUrl) {
@@ -2369,20 +3104,24 @@ async function startWatch(deviceId, opts) {
       w.status = 'error';
       w.note = 'Không mở được ' + (w.gameUrl ? 'link game' : 'TikTok Lite') + ': ' + ((res && res.error) || 'unknown');
       addEvent('watch_error', deviceId, w.note);
+      saveWatchState();
       return { watch: w };
     }
   } catch (e) {
     w.status = 'error';
     w.note = 'Không mở được app/link: ' + (e && e.message || e);
     addEvent('watch_error', deviceId, w.note);
+    saveWatchState();
     return { watch: w };
   }
   w.status = 'watching';
+  saveWatchState();
   addEvent('watch_start', deviceId, 'Bắt đầu vòng quét game & xem video (' + minutes + ' phút)' + (w.gameUrl ? ' — link game: ' + w.gameUrl : ''));
   watchLoop(w).catch((e) => {
     w.status = 'error';
     w.note = 'Lỗi vòng xem: ' + (e && e.message || e);
     addEvent('watch_error', deviceId, w.note);
+    saveWatchState();
   });
   return { watch: w };
 }
@@ -2396,7 +3135,73 @@ function stopWatch(deviceId) {
     w.note = 'Đã dừng tay';
     addEvent('watch_stop', deviceId, 'Đã dừng vòng xem game');
   }
+  saveWatchState();
   return { watch: w };
+}
+
+// ================= Luu/khoi phuc vong xem (Giai doan 5) =================
+// Vong xem duoc ghi xuong data/watch-state.json moi khi bat/dung/
+// ket thuc. Server khoi dong lai: vong dang chay do duoc nap lai
+// voi trang thai 'interrupted' va KHONG tu chay lai — nguoi dung
+// tu bam "Bat dau xem" khi can (tranh may tu xem ngoai y muon sau
+// mot lan server sap).
+let restoredWatchCount = 0;
+
+function saveWatchState() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const list = Array.from(watches.values()).map((w) => ({
+      deviceId: w.deviceId,
+      label: w.label || '',
+      status: w.status,
+      startedAt: w.startedAt || null,
+      endsAt: w.endsAt || null,
+      minutes: w.minutes || 30,
+      gameUrl: w.gameUrl || '',
+      detect: w.detect !== false,
+      rounds: w.rounds || 0,
+      matchedMarker: w.matchedMarker || null,
+      lastError: w.lastError || null,
+      note: w.note || ''
+    }));
+    fs.writeFileSync(WATCH_FILE, JSON.stringify({ watches: list }, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[watch] khong ghi duoc watch-state.json:', e.message);
+  }
+}
+
+function restoreWatchState() {
+  let data = null;
+  try { data = JSON.parse(fs.readFileSync(WATCH_FILE, 'utf8')); } catch (e) { return; }
+  if (!data || !Array.isArray(data.watches)) return;
+  for (const pw of data.watches) {
+    if (!pw || !pw.deviceId || watches.has(pw.deviceId)) continue;
+    const w = {
+      deviceId: pw.deviceId,
+      label: pw.label || pw.deviceId,
+      status: pw.status || 'stopped',
+      startedAt: pw.startedAt || null,
+      endsAt: pw.endsAt || null,
+      endsAtMs: Date.parse(pw.endsAt || '') || Date.now(),
+      minutes: pw.minutes || 30,
+      gameUrl: pw.gameUrl || '',
+      detect: pw.detect !== false,
+      rounds: pw.rounds || 0,
+      matchedMarker: pw.matchedMarker || null,
+      lastError: pw.lastError || null,
+      note: pw.note || '',
+      stopRequested: true
+    };
+    if (w.status === 'watching' || w.status === 'starting') {
+      w.status = 'interrupted';
+      w.note = 'Server khởi động lại — vòng xem KHÔNG tự chạy lại; bấm Bắt đầu xem để chạy tiếp';
+      restoredWatchCount++;
+    }
+    watches.set(pw.deviceId, w);
+  }
+  if (restoredWatchCount > 0) {
+    console.log('[watch] da khoi phuc ' + restoredWatchCount + ' vong xem dang do (interrupted)');
+  }
 }
 
 // ================= Xoa may / Reset may (Giai doan 3.3) =================
@@ -2411,6 +3216,9 @@ function releaseDeviceAccounts(deviceId) {
     ga.assignedAt = null;
     savePool();
   }
+  // Giai doan 5: may bi xoa ma dang giu claim Gmail -> nha claim luon
+  const claimedEmail = releaseGmailClaim(deviceId, 'xoa may');
+  if (claimedEmail && !released.gmail) released.gmail = claimedEmail;
   const ha = heoPool.accounts.find((a) => a.status === 'assigned' && a.deviceId === deviceId);
   if (ha) {
     released.heo = ha.username;
@@ -2604,6 +3412,16 @@ async function broadcastOne(deviceId, j) {
   }
 }
 
+// ================= Khoi phuc sau khi server khoi dong lai (Giai doan 5) ====
+restoreRuns();
+restoreWatchState();
+if (restoredRunCount > 0 || restoredWatchCount > 0) {
+  addEvent('server_restore', null,
+    'Đã khôi phục ' + restoredRunCount + ' tác vụ' +
+    (restoredWatchCount > 0 ? ' và ' + restoredWatchCount + ' vòng xem' : '') +
+    ' sau khi server khởi động lại — mở tab ⚙ Tác vụ để chạy tiếp các tác vụ đang dở');
+}
+
 // ================= HTTP server =================
 const httpServer = http.createServer(async (req, res) => {
   try {
@@ -2624,7 +3442,8 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === 'GET' && u.pathname === '/api/info') {
       jsonRes(res, 200, {
         ok: true, tcpPort: TCP_PORT, httpPort: HTTP_PORT,
-        lanIp: lanIp(req), serverTime: nowIso(), agentVersionExpected: '3.0'
+        lanIp: lanIp(req), serverTime: nowIso(), agentVersionExpected: '3.0',
+        restoredRuns: restoredRunCount, restoredWatches: restoredWatchCount
       });
       return;
     }
@@ -2718,11 +3537,29 @@ const httpServer = http.createServer(async (req, res) => {
 
     // ---- Gmail pool ----
     if (req.method === 'GET' && u.pathname === '/api/gmail') {
+      sweepExpiredClaims();
       jsonRes(res, 200, {
         ok: true,
         accounts: pool.accounts.map(publicAccount),
-        ready: pool.accounts.filter((a) => a.status === 'ready').length
+        // 'ready' = so tai khoan RUT DUOC ngay (ready va khong bi
+        // may khac giu claim) — khop voi dieu kien pool_empty cua flow.
+        ready: pool.accounts.filter((a) => a.status === 'ready' && !isClaimLive(a)).length
       });
+      return;
+    }
+    // Giai doan 5: danh sach claim Gmail dang song (ticket + may giu
+    // + han) — ticket khong phai mat khau, chi la ma giu cho.
+    if (req.method === 'GET' && u.pathname === '/api/gmail/claims') {
+      sweepExpiredClaims();
+      const claims = pool.accounts.filter(isClaimLive).map((a) => ({
+        accountId: a.id,
+        email: a.email,
+        deviceId: a.claimedByDeviceId,
+        ticket: a.claimTicket,
+        claimedAt: a.claimedAt || null,
+        expiresAt: a.claimExpiresAt || null
+      }));
+      jsonRes(res, 200, { ok: true, claims: claims });
       return;
     }
     if (req.method === 'POST' && u.pathname === '/api/gmail/import') {
@@ -2753,6 +3590,7 @@ const httpServer = http.createServer(async (req, res) => {
       if (idx < 0) { jsonRes(res, 200, { ok: false, error: 'account_not_found' }); return; }
       if (u.pathname === '/api/gmail/mark-die') {
         pool.accounts[idx].status = 'die';
+        clearClaimFields(pool.accounts[idx]); // Giai doan 5: die thi nha claim
         savePool();
         jsonRes(res, 200, { ok: true, account: publicAccount(pool.accounts[idx]) });
       } else {
@@ -2776,13 +3614,22 @@ const httpServer = http.createServer(async (req, res) => {
       let j;
       try { j = await readJsonBody(req); } catch (e) { jsonRes(res, 400, { ok: false, error: 'bad_json' }); return; }
       if (!j.deviceId) { jsonRes(res, 400, { ok: false, error: 'missing_deviceId' }); return; }
+      // Giai doan 5: dung co che CLAIM nhu pipeline — may da co
+      // assigned thi dung lai; chua co thi giu claim 12 gio, dang
+      // nhap xong chuyen thanh assigned; loi thi nha claim; gap xac
+      // minh (outcome 'verify', endpoint khong dung cho duoc) thi
+      // claim VAN GIU de lan chay tiep dung dung tai khoan do.
       let acct = findAccountForDevice(j.deviceId);
       if (!acct) {
-        const r = assignGmail(j.deviceId);
+        const r = claimGmail(j.deviceId);
         if (r.error) { jsonRes(res, 200, { ok: false, error: r.error }); return; }
         acct = r.account;
       }
       const out = await gmailSigninSequence(j.deviceId, acct, {});
+      if (out.outcome === 'done') convertClaimToAssignment(j.deviceId);
+      else if (out.outcome === 'error' || out.outcome === 'stopped') {
+        releaseGmailClaim(j.deviceId, 'signin-assist ' + out.outcome);
+      }
       const steps = [
         { step: 'email', ok: !!out.emailTyped, error: out.emailTyped ? null : (out.note || 'not_typed') },
         { step: 'password', ok: !!out.passwordTyped, error: out.passwordTyped ? null : (out.note || 'not_typed') }
@@ -2915,7 +3762,7 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === 'GET' && u.pathname === '/api/pipeline/runs') {
       const list = Array.from(runs.values()).map(publicRun);
       list.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
-      jsonRes(res, 200, { ok: true, runs: list });
+      jsonRes(res, 200, { ok: true, runs: list, restored: restoredRunCount });
       return;
     }
     if (req.method === 'POST' && u.pathname === '/api/pipeline/resume') {
@@ -2924,14 +3771,47 @@ const httpServer = http.createServer(async (req, res) => {
       const run = runs.get(j.runId);
       if (!run) { jsonRes(res, 200, { ok: false, error: 'run_not_found' }); return; }
       const dr = run.devices.get(j.deviceId);
-      if (!dr || dr.status !== 'waiting_manual' || !dr._resumeResolve) {
-        jsonRes(res, 200, { ok: false, error: 'not_waiting_manual' });
+      if (!dr) { jsonRes(res, 200, { ok: false, error: 'not_waiting_manual' }); return; }
+      // Duong 1 (nhu cu): run dang song, may dang dung Cho cham tay
+      // that su (co promise dang cho) -> danh thuc promise do.
+      if (dr._resumeResolve) {
+        const resolve = dr._resumeResolve;
+        dr._resumeResolve = null;
+        resolve('resumed');
+        jsonRes(res, 200, { ok: true });
         return;
       }
-      const resolve = dr._resumeResolve;
-      dr._resumeResolve = null;
-      resolve('resumed');
-      jsonRes(res, 200, { ok: true });
+      // Duong 2 (Giai doan 5): run duoc KHOI PHUC sau khi server
+      // khoi dong lai, khong con promise nao dang cho:
+      //  - waiting_manual: coi buoc cham tay da xu ly xong, danh dau
+      //    buoc do 'done' va chay tiep tu buoc sau;
+      //  - interrupted (server chet giua buoc): chay lai tu buoc
+      //    dang do (buoc duoc phat lai tu dau).
+      if (dr._restored && dr.status === 'waiting_manual') {
+        const idx = dr.currentStep;
+        if (dr.steps[idx]) {
+          dr.steps[idx].status = 'done';
+          dr.steps[idx].note = 'Đã xử lý tay (run khôi phục sau khi server khởi động lại)';
+        }
+        // Nguoi dung bao "da xu ly" = buoc dang nhap/xac minh da xong
+        // bang tay -> claim Gmail (neu con) chuyen thanh Da cap.
+        convertClaimToAssignment(dr.deviceId);
+        dr.status = 'running';
+        dr._restored = false;
+        saveRuns();
+        runDevicePipeline(run, dr, idx + 1).catch((e) => console.error('[pipeline] loi chay tiep run khoi phuc:', e));
+        jsonRes(res, 200, { ok: true, restored: true });
+        return;
+      }
+      if (dr._restored && dr.status === 'interrupted') {
+        dr.status = 'running';
+        dr._restored = false;
+        saveRuns();
+        runDevicePipeline(run, dr, dr.currentStep).catch((e) => console.error('[pipeline] loi chay tiep run khoi phuc:', e));
+        jsonRes(res, 200, { ok: true, restored: true });
+        return;
+      }
+      jsonRes(res, 200, { ok: false, error: 'not_waiting_manual' });
       return;
     }
     if (req.method === 'POST' && u.pathname === '/api/pipeline/stop') {
@@ -2946,8 +3826,15 @@ const httpServer = http.createServer(async (req, res) => {
           dr._resumeResolve = null;
           resolve('stopped');
         }
-        if (dr.status === 'running' || dr.status === 'waiting_manual') dr.status = 'stopped';
+        if (dr.status === 'running' || dr.status === 'waiting_manual' || dr.status === 'interrupted') {
+          dr.status = 'stopped';
+          dr._restored = false;
+          // Run khoi phuc khong co promise nao chay nen lop boc
+          // khong chay — nha claim ngay tai day cho chac.
+          releaseGmailClaim(dr.deviceId, 'pipeline bi dung (run khoi phuc)');
+        }
       }
+      saveRuns();
       jsonRes(res, 200, { ok: true });
       return;
     }
@@ -2998,6 +3885,28 @@ const httpServer = http.createServer(async (req, res) => {
         lastEventId: eventCounter,
         checkinSuccess: checkinSuccessTotal
       });
+      return;
+    }
+
+    // ---- Ghep noi bang QR (Giai doan 5) ----
+    // POST /api/pairing/new: tao phien ghep noi moi (ma song 300s).
+    // GET  /api/pairing: phien moi nhat con han (payload + anh SVG)
+    // de dashboard ve ma QR; chua co phien nao con han -> active:false.
+    if (req.method === 'POST' && u.pathname === '/api/pairing/new') {
+      const s = createPairingSession();
+      jsonRes(res, 200, publicPairing(s, req));
+      return;
+    }
+    if (req.method === 'GET' && u.pathname === '/api/pairing') {
+      const t = Date.now();
+      let latest = null;
+      for (const s of pairingSessions.values()) {
+        if (t <= Date.parse(s.expiresAt)) latest = s;
+      }
+      if (!latest) { jsonRes(res, 200, { ok: true, active: false }); return; }
+      const out = publicPairing(latest, req);
+      out.active = true;
+      jsonRes(res, 200, out);
       return;
     }
 

@@ -38,6 +38,7 @@
   .b-do { background: #2563eb; } .b-a11y { background: #7c3aed; } .b-no { background: #d1d5db; color: #374151; }
   .b-gmail { background: #db2777; } .b-heo { background: #d97706; } .b-ck { background: #0ea5e9; }
   .b-watch { background: #db2777; } .b-checkin { background: #16a34a; }
+  .b-line { background: #06c755; } .b-pair { background: #4f46e5; }
   .meta { font-size: 14.5px; line-height: 1.55; color: #37314d; }
   .btns { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
   button { font-size: 14px; padding: 8px 11px; border: 0; border-radius: 8px; background: #7c3aed; color: #fff; cursor: pointer; }
@@ -77,7 +78,7 @@
   .steps li.waiting_manual { color: #b45309; font-weight: 800; background: #fffbeb; }
   .steps li.skipped { color: #6b7280; }
   .st-running { color: #7c3aed; } .st-done { color: #15803d; } .st-error { color: #b91c1c; }
-  .st-waiting_manual { color: #b45309; } .st-stopped { color: #6b7280; }
+  .st-waiting_manual { color: #b45309; } .st-stopped { color: #6b7280; } .st-interrupted { color: #b91c1c; font-weight: 700; }
   .prog { background: #ede9fe; border-radius: 999px; height: 12px; overflow: hidden; min-width: 110px; }
   .prog > div { background: linear-gradient(90deg, #7c3aed, #ec4899); height: 100%; }
   .ckrow { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; padding: 8px 0; border-bottom: 1px dashed #ede9fe; font-size: 14.5px; }
@@ -145,6 +146,20 @@
         <li><b>Bật Trợ năng</b> cho Farm Agent + <b>cấp quyền chụp màn hình</b> (“Bắt đầu ngay”) trong app. Xong — máy hiện ở danh sách phía trên.</li>
       </ol>
       <div class="small">Lưu ý: cách B không có quyền Device Owner nên <b>không reset nhà máy từ xa được</b> — muốn reset từ xa phải ghi danh theo cách A.</div>
+
+      <h3>C. Ghép nối bằng QR (agent v5 — nhanh nhất cho máy đang dùng sẵn)</h3>
+      <ol class="stepsnum">
+        <li>Bấm <b>“Tạo mã ghép nối”</b> bên dưới — mã QR chỉ sống <b>300 giây</b> và chỉ dùng cho <b>một máy</b>.</li>
+        <li>Trên điện thoại, mở <b>Farm Agent</b> → bấm <b>“Quét mã ghép nối”</b> → chĩa camera vào mã QR này. (Hoặc dùng app camera/Lens bất kỳ quét mã — máy sẽ mở đúng Farm Agent.)</li>
+        <li>Agent tự điền IP + cổng của MacBook này và tự kết nối — <b>khỏi gõ tay</b>. Nhãn máy vẫn sửa được trong app như cũ.</li>
+        <li>Mã hết hạn / đã dùng cho máy khác thì agent báo rõ lý do — bấm tạo mã mới rồi quét lại.</li>
+      </ol>
+      <div class="row">
+        <button id="pairNew" class="ghost">Tạo mã ghép nối</button>
+        <span class="small" id="pairInfo">Chưa có mã ghép nối.</span>
+      </div>
+      <div id="pairQr" style="margin:8px 0"></div>
+      <div class="small" id="pairPayload" style="word-break:break-all"></div>
     </div>
   </section>
 
@@ -212,6 +227,11 @@
         <p>Gửi link APK LINE cho các máy đã chọn — máy tự tải và mở trình cài đặt (chạm “Cài đặt” trên máy).</p>
         <input type="text" id="taskLineUrl" placeholder="http://IP:8080/apks/line.apk">
         <button id="taskLine" class="blue">▶ Chạy cho máy đã chọn</button>
+      </div>
+      <div class="task">
+        <h3>💚 Đăng ký LINE (Singapore + Google)</h3>
+        <p>Cấp Gmail từ kho (giữ chỗ 12 giờ) → tự đăng nhập Google → <b>chạm tay gỡ các tài khoản Google KHÁC</b> khỏi máy (không tự động xoá được) → mở LINE, đăng ký bằng Google với quốc gia <b>Singapore</b>. Gặp màn hình xác minh/SMS thì dừng chờ chạm tay. Xong thì thẻ máy hiện huy hiệu 💚 LINE ✔.</p>
+        <button id="taskLineReg" class="blue">▶ Chạy cho máy đã chọn</button>
       </div>
       <div class="task">
         <h3>🎵 Tải TikTok Lite</h3>
@@ -465,6 +485,12 @@ function renderDevices(list) {
     meta.appendChild(el('span', 'badge ' + (d.heoAssigned ? 'b-heo' : 'b-no'), d.heoAssigned ? '🐷 TK: ' + d.heoAssigned : 'Chưa có TK heo'));
     var ck = d.checkin || { count: 0, todayDone: false, complete: false };
     meta.appendChild(el('span', 'badge b-ck', '📅 Điểm danh: ' + ck.count + '/14' + (ck.complete ? ' ✔ ĐỦ' : (ck.todayDone ? ' · hôm nay ✔' : ''))));
+    if (d.line && d.line.done) {
+      meta.appendChild(el('span', 'badge b-line', '💚 LINE ✔'));
+    }
+    if (d.pairedViaQr) {
+      meta.appendChild(el('span', 'badge b-pair', '📷 Ghép nối QR'));
+    }
     if (d.watch) {
       meta.appendChild(document.createElement('br'));
       var wTxt = null, wCls = 'b-no';
@@ -472,6 +498,7 @@ function renderDevices(list) {
       else if (d.watch.status === 'da_checkin') { wTxt = '🎉 ĐÃ CHECK-IN THÀNH CÔNG'; wCls = 'b-checkin'; }
       else if (d.watch.status === 'error') { wTxt = 'Xem video: lỗi'; wCls = 'b-no'; }
       else if (d.watch.status === 'stopped') { wTxt = 'Xem video: đã dừng'; wCls = 'b-no'; }
+      else if (d.watch.status === 'interrupted') { wTxt = 'Xem video: bị gián đoạn (server khởi động lại)'; wCls = 'b-no'; }
       if (wTxt) meta.appendChild(el('span', 'badge ' + wCls, wTxt));
       if (d.watch.note) meta.appendChild(el('div', 'small', d.watch.note));
     }
@@ -620,8 +647,14 @@ function renderPoolTable(bodyId, accounts, kind) {
     td(a.passwordMasked || '********');
     var stText = a.status === 'ready' ? 'Sẵn sàng' : (a.status === 'assigned' ? 'Đã cấp' : 'Die');
     if (kind === 'heo' && a.status === 'assigned' && a.loggedInAt) stText = 'Đã cấp · đã đăng nhập';
+    if (kind === 'gmail' && a.claim) stText = 'Đang giữ (claim 12 giờ)';
     td(stText);
-    td(a.deviceId ? nameOfDevice(a.deviceId) : '—');
+    if (kind === 'gmail' && a.claim) {
+      var hhmm = a.claim.expiresAt ? new Date(a.claim.expiresAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+      td('Đang giữ bởi ' + nameOfDevice(a.claim.deviceId) + (hhmm ? ' · hết hạn ' + hhmm : ''));
+    } else {
+      td(a.deviceId ? nameOfDevice(a.deviceId) : '—');
+    }
     var ops = el('td', '');
     if (a.status !== 'die') {
       ops.appendChild(mkBtn('Đánh dấu die', function () {
@@ -817,10 +850,12 @@ function renderRuns(j) {
       var dwrap = el('div', 'devrun');
       var head = el('div', '');
       head.appendChild(el('span', '', '📱 ' + nameOfDevice(dr.deviceId) + ' — '));
-      head.appendChild(el('span', 'st st-' + dr.status, dr.status === 'waiting_manual' ? 'CHỜ CHẠM TAY' : dr.status));
-      if (dr.status === 'waiting_manual') {
+      var statusTxt = dr.status === 'waiting_manual' ? 'CHỜ CHẠM TAY'
+        : (dr.status === 'interrupted' ? 'BỊ GIÁN ĐOẠN (server khởi động lại)' : dr.status);
+      head.appendChild(el('span', 'st st-' + dr.status, statusTxt + (dr.restored ? ' · đã khôi phục' : '')));
+      if (dr.status === 'waiting_manual' || dr.status === 'interrupted') {
         head.appendChild(document.createTextNode(' '));
-        head.appendChild(mkBtn('Đã xử lý — chạy tiếp', function () {
+        head.appendChild(mkBtn(dr.status === 'interrupted' ? 'Chạy lại bước đang dở' : 'Đã xử lý — chạy tiếp', function () {
           fetch('/api/pipeline/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: r.id, deviceId: dr.deviceId }) })
             .then(function (x) { return x.json(); }).then(function (y) {
               logLine('Đã cho ' + nameOfDevice(dr.deviceId) + ' chạy tiếp sau bước chạm tay', y && y.ok);
@@ -861,6 +896,7 @@ function installTask(urlId, appName) {
   ids.forEach(function (id) { sendCmd(id, nameOfDevice(id), 'install_url', { url: url }); });
 }
 document.getElementById('taskLine').onclick = function () { installTask('taskLineUrl', 'LINE'); };
+document.getElementById('taskLineReg').onclick = function () { startPipeline('dang-ky-line', getSelectedIds(), {}, 'Đăng ký LINE (Singapore + Google)'); };
 document.getElementById('taskTiktok').onclick = function () { installTask('taskTiktokUrl', 'TikTok Lite'); };
 
 // ---------- Hanh dong: diem danh / xem video / check heo ----------
@@ -1036,6 +1072,56 @@ function refreshDevices() {
     renderDevices(j.devices || []);
   }).catch(function () {});
 }
+// ---------- Ghep noi bang QR (Giai doan 5) ----------
+var pairExpiresAt = 0;
+var pairUsedBy = null;
+function renderPairing(j) {
+  var info = document.getElementById('pairInfo');
+  var qrBox = document.getElementById('pairQr');
+  var payloadEl = document.getElementById('pairPayload');
+  if (!j || !j.ok || !j.code) {
+    info.textContent = 'Chưa có mã ghép nối.';
+    qrBox.innerHTML = '';
+    payloadEl.textContent = '';
+    pairExpiresAt = 0;
+    return;
+  }
+  pairExpiresAt = Date.parse(j.expiresAt) || 0;
+  pairUsedBy = j.usedBy || null;
+  qrBox.innerHTML = j.svg || '';
+  payloadEl.textContent = j.payload || '';
+  tickPairing();
+}
+function tickPairing() {
+  if (!pairExpiresAt) return;
+  var info = document.getElementById('pairInfo');
+  var left = Math.max(0, Math.round((pairExpiresAt - Date.now()) / 1000));
+  if (pairUsedBy) {
+    info.textContent = '✔ Mã đã được một máy quét — máy đó đã kết nối. Tạo mã mới cho máy tiếp theo.';
+  } else if (left <= 0) {
+    info.textContent = 'Mã đã HẾT HẠN — bấm “Tạo mã ghép nối” để lấy mã mới.';
+  } else {
+    info.textContent = 'Mã còn hiệu lực ' + left + ' giây — quét bằng Farm Agent trên điện thoại ngay.';
+  }
+}
+setInterval(tickPairing, 1000);
+document.getElementById('pairNew').onclick = function () {
+  fetch('/api/pairing/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    .then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) {
+        renderPairing(j);
+        logLine('📷 Đã tạo mã ghép nối QR mới (sống ' + (j.ttlSeconds || 300) + ' giây) — quét bằng Farm Agent trên điện thoại.', true);
+      } else {
+        logLine('Tạo mã ghép nối thất bại: ' + ((j && j.error) || '?'), false);
+      }
+    }).catch(function (e) { logLine('Lỗi tạo mã ghép nối: ' + e, false); });
+};
+function refreshPairing() {
+  fetch('/api/pairing').then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok && j.active) renderPairing(j);
+  }).catch(function () {});
+}
+
 refreshInfo();
 refreshDevices();
 refreshPools();
@@ -1044,6 +1130,7 @@ loadGameLink();
 refreshRuns();
 refreshEvents();
 refreshCheckin();
+refreshPairing();
 setInterval(function () { refreshDevices(); refreshPools(); refreshRuns(); refreshEvents(); refreshCheckin(); }, 3000);
 logLine('Dashboard Giai đoạn 3.3 đã mở. Đang chờ máy kết nối...', null);
 hdLogLine('Sẵn sàng: Điểm danh 14 ngày · Tự động xem video · Check heo (cần link game chuyên dụng).', null);

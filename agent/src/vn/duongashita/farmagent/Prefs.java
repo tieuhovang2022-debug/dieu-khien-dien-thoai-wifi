@@ -9,6 +9,9 @@ public final class Prefs {
     public static final String KEY_PORT = "port";
     public static final String KEY_LABEL = "label";
     public static final String KEY_ENABLED = "enabled";
+    // Giai doan 5: ma ghep noi QR vua quet — gui kem trong hello mot
+    // lan; server tra ket qua xong la xoa (ke ca thanh cong lan tu choi).
+    public static final String KEY_PAIR_CODE = "pair_code";
 
     private Prefs() {}
 
@@ -43,5 +46,17 @@ public final class Prefs {
 
     public static void setEnabled(Context c, boolean enabled) {
         get(c).edit().putBoolean(KEY_ENABLED, enabled).apply();
+    }
+
+    public static String pairCode(Context c) {
+        return get(c).getString(KEY_PAIR_CODE, "");
+    }
+
+    public static void setPairCode(Context c, String code) {
+        get(c).edit().putString(KEY_PAIR_CODE, code == null ? "" : code).apply();
+    }
+
+    public static void clearPairCode(Context c) {
+        setPairCode(c, "");
     }
 }
